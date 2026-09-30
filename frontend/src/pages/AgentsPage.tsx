@@ -30,6 +30,10 @@ export function AgentsPage() {
   return (
     <div className="page">
       <h1 className="page-title">Агенты</h1>
+      <p className="hint" data-testid="roles-duty-hint">
+        У каждой роли уже есть зона ответственности. Откройте карточку и измените текст или оставьте как есть. Более
+        полный текст по умолчанию появится позже.
+      </p>
       <div className="agent-grid">
         {agents.map((agent) => {
           const on = agentOnline(agent, connected)

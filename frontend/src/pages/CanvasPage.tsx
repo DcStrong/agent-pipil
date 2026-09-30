@@ -2,6 +2,7 @@
 import { LayoutGroup, motion } from 'motion/react'
 import { useEffect, useState } from 'react'
 import { api, messageOf } from '../api'
+import { TaskExamples, type ExampleId } from '../components/TaskExamples'
 import { finalText, statusLabel, taskTitle } from '../format'
 import { useLive } from '../live'
 import { href } from '../route'
@@ -24,6 +25,8 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [missedId, setMissedId] = useState<string | null>(null)
+  /** Какой пример последний подставил текст. На запуск не влияет. */
+  const [example, setExample] = useState<ExampleId | null>(null)
 
   const signature = workflow
     ? JSON.stringify({
@@ -320,6 +323,16 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
             </label>
           ))}
         </div>
+        <TaskExamples
+          agents={roleAgents}
+          picked={picked}
+          active={example}
+          onApply={(exampleId, nextTask, nextPicked) => {
+            setExample(exampleId)
+            setTask(nextTask)
+            setPicked(nextPicked)
+          }}
+        />
         <label className="field">
           <span>Папка проекта</span>
           <input
@@ -329,6 +342,9 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
             onChange={(event) => setProjectPath(event.target.value)}
           />
         </label>
+        <p className="hint" data-testid="folder-hint">
+          Для новой возможности укажите здесь папку проекта.
+        </p>
         <label className="field">
           <span>Карта, если уже есть</span>
           <input
@@ -351,6 +367,9 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
         >
           Запустить
         </button>
+        <p className="hint" data-testid="start-hint">
+          «Запустить» отдаёт задачу отмеченным ролям. Токен Cursor для этого не нужен: без него запуск остаётся имитацией.
+        </p>
         {live ? (
           <p className="now" data-testid="run-status">
             Сейчас: {live.steps[live.stepIndex ?? 0]?.title ?? '—'} · {statusLabel(live.status)}
@@ -362,7 +381,12 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
             <p data-testid="pending-question">{live.pendingQuestion}</p>
             <label className="field">
               <span>Ответ</span>
-              <textarea data-testid="user-answer" value={answer} onChange={(event) => setAnswer(event.target.value)} />
+              <textarea
+                data-testid="user-answer"
+                value={answer}
+                placeholder="Ответ на вопрос роли"
+                onChange={(event) => setAnswer(event.target.value)}
+              />
             </label>
             <button type="button" className="primary" data-testid="send-answer" disabled={busy || !answer.trim()} onClick={() => void sendAnswer()}>
               Ответить
@@ -372,14 +396,22 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
         {openedStep ? (
           <section className="dialogue" data-testid="dialogue">
             <h2>Диалог · {openedStep.title}</h2>
-            {openedStep.messages.length === 0 ? <p className="hint">Реплик пока нет.</p> : null}
+            {openedStep.messages.length === 0 ? (
+              <p className="hint" data-testid="dialogue-empty">
+                Реплик пока нет. Это диалог выбранной роли.
+              </p>
+            ) : null}
             {openedStep.messages.map((message) => (
               <p key={message.id} className={`bubble ${message.author}`}>
                 {message.text}
               </p>
             ))}
           </section>
-        ) : null}
+        ) : (
+          <p className="hint" data-testid="dialogue-hint">
+            После запуска нажмите роль на холсте: здесь откроется её диалог. Если конвейер ждёт, ответьте на вопрос на этом же экране.
+          </p>
+        )}
         {shown?.project ? (
           <p className="hint">
             Проект: {shown.project.folder ?? 'не задан'}. Правила, навыки и команды берутся из .cursor по путям

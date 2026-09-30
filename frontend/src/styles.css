@@ -402,6 +402,13 @@ button:disabled { opacity: 0.45; cursor: default; }
 .result h2, .editor h2, .details h2, .form-card h2 { margin: 0 0 8px; font-size: 16px; }
 .result p { white-space: pre-wrap; line-height: 1.45; font-size: 14px; }
 .editor { display: flex; flex-direction: column; gap: 10px; padding-top: 8px; border-top: 1px solid #222226; }
+.page > .hint { margin: 0 0 16px; }
+.side .hint { margin: 0; }
+.examples { display: flex; flex-direction: column; gap: 10px; }
+.examples article { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.examples strong { font-size: 14px; }
+.examples p { color: var(--muted); font-size: 13px; line-height: 1.45; }
+.examples button[aria-pressed='true'] { border-color: var(--amber); }
 .roles { display: flex; flex-direction: column; gap: 6px; }
 .roles label {
   display: flex;
