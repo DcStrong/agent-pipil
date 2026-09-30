@@ -4,9 +4,12 @@ import type {
   CursorConnection,
   Harness,
   Health,
+  PipelinePreset,
+  PresetSteps,
   Run,
   Skill,
   SkillScope,
+  StepMode,
   StreamMessage,
   Workflow,
   WorkflowStep,
@@ -60,6 +63,22 @@ export const api = {
     id: string,
     body: { name: string; description: string; steps: WorkflowStep[] },
   ) => request<Workflow>(`/api/workflows/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  presets: () => request<PipelinePreset[]>('/api/presets'),
+  createPreset: (body: {
+    name: string
+    description?: string
+    steps: Array<{
+      key: string
+      agentId: string
+      title: string
+      mode: StepMode
+      handoff: string
+      nextKeys: string[]
+    }>
+  }) => request<PipelinePreset>('/api/presets', { method: 'POST', body: JSON.stringify(body) }),
+  deletePreset: (id: string) => request<{ ok: true }>(`/api/presets/${id}`, { method: 'DELETE' }),
+  presetSteps: (id: string) => request<PresetSteps>(`/api/presets/${id}/steps`),
+  openPreset: (id: string) => request<Workflow>(`/api/presets/${id}/workflows`, { method: 'POST' }),
   runs: () => request<Run[]>('/api/runs'),
   run: (id: string) => request<Run>(`/api/runs/${id}`),
   startRun: (

@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from 'react'
 import { api, mergeRun, messageOf, subscribeRuns } from './api'
-import type { Agent, CursorConnection, Run, Skill, Workflow } from './types'
+import type { Agent, CursorConnection, PipelinePreset, Run, Skill, Workflow } from './types'
 
 interface LiveValue {
   ready: boolean
@@ -17,12 +17,15 @@ interface LiveValue {
   agents: Agent[]
   skills: Skill[]
   workflows: Workflow[]
+  presets: PipelinePreset[]
   runs: Run[]
   cursor: CursorConnection | null
   reload: () => Promise<void>
   upsertRun: (run: Run) => void
   /** Кладёт процесс в уже открытый список, без повторной загрузки всей страницы. */
   upsertWorkflow: (workflow: Workflow) => void
+  upsertPreset: (preset: PipelinePreset) => void
+  removePreset: (id: string) => void
 }
 
 const LiveContext = createContext<LiveValue | null>(null)
@@ -31,22 +34,25 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   const [agents, setAgents] = useState<Agent[]>([])
   const [skills, setSkills] = useState<Skill[]>([])
   const [workflows, setWorkflows] = useState<Workflow[]>([])
+  const [presets, setPresets] = useState<PipelinePreset[]>([])
   const [runs, setRuns] = useState<Run[]>([])
   const [cursor, setCursor] = useState<CursorConnection | null>(null)
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const reload = useCallback(async () => {
-    const [nextAgents, nextSkills, nextWorkflows, nextRuns, nextCursor] = await Promise.all([
+    const [nextAgents, nextSkills, nextWorkflows, nextPresets, nextRuns, nextCursor] = await Promise.all([
       api.agents(),
       api.skills(),
       api.workflows(),
+      api.presets(),
       api.runs(),
       api.cursor(),
     ])
     setAgents(nextAgents)
     setSkills(nextSkills)
     setWorkflows(nextWorkflows)
+    setPresets(nextPresets)
     setRuns(nextRuns)
     setCursor(nextCursor)
     setReady(true)
@@ -65,6 +71,20 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       next[index] = workflow
       return next
     })
+  }, [])
+
+  const upsertPreset = useCallback((preset: PipelinePreset) => {
+    setPresets((list) => {
+      const index = list.findIndex((item) => item.id === preset.id)
+      if (index === -1) return [...list, preset]
+      const next = list.slice()
+      next[index] = preset
+      return next
+    })
+  }, [])
+
+  const removePreset = useCallback((id: string) => {
+    setPresets((list) => list.filter((item) => item.id !== id))
   }, [])
 
   useEffect(() => {
@@ -99,8 +119,36 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   }, [active])
 
   const value = useMemo<LiveValue>(
-    () => ({ ready, error, agents, skills, workflows, runs, cursor, reload, upsertRun, upsertWorkflow }),
-    [ready, error, agents, skills, workflows, runs, cursor, reload, upsertRun, upsertWorkflow],
+    () => ({
+      ready,
+      error,
+      agents,
+      skills,
+      workflows,
+      presets,
+      runs,
+      cursor,
+      reload,
+      upsertRun,
+      upsertWorkflow,
+      upsertPreset,
+      removePreset,
+    }),
+    [
+      ready,
+      error,
+      agents,
+      skills,
+      workflows,
+      presets,
+      runs,
+      cursor,
+      reload,
+      upsertRun,
+      upsertWorkflow,
+      upsertPreset,
+      removePreset,
+    ],
   )
 
   return <LiveContext.Provider value={value}>{children}</LiveContext.Provider>

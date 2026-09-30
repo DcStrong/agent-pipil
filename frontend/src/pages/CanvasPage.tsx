@@ -18,7 +18,8 @@ const MODE_OPTIONS = [
 ]
 
 export function CanvasPage({ workflowId }: { workflowId: string }) {
-  const { ready, workflows, agents, runs, reload, upsertRun, upsertWorkflow } = useLive()
+  const { ready, workflows, agents, runs, presets, reload, upsertRun, upsertWorkflow, upsertPreset, removePreset } =
+    useLive()
   const workflow = workflows.find((item) => item.id === workflowId)
   const [draft, setDraft] = useState<Workflow | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
@@ -32,6 +33,9 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [missedId, setMissedId] = useState<string | null>(null)
+  const [picked, setPicked] = useState('')
+  const [presetName, setPresetName] = useState('')
+  const [presetNote, setPresetNote] = useState<string | null>(null)
 
   const signature = workflow
     ? JSON.stringify({
@@ -94,6 +98,8 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
   }
 
   const steps = draft.steps
+  const pickedId = presets.some((item) => item.id === picked) ? picked : (presets[0]?.id ?? '')
+  const pickedPreset = presets.find((item) => item.id === pickedId)
   const graph = materialize(steps)
   const byId = new Map(graph.map((step) => [step.id, step]))
   const selectedStep = graph.find((step) => step.id === selected) ?? graph[0]
@@ -233,6 +239,80 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
     }
   }
 
+  /** Ставит выбранную цепочку на открытый холст. Сеть Cursor при этом не вызывается. */
+  async function applyPreset() {
+    const source = draft
+    if (!pickedId || !source || locked) return
+    setBusy(true)
+    setError(null)
+    setPresetNote(null)
+    try {
+      const built = await api.presetSteps(pickedId)
+      setLinking(false)
+      setDraft({
+        ...source,
+        name: built.name,
+        description: built.description,
+        steps: built.steps,
+      })
+      setSelected(built.steps[0]?.id ?? null)
+      setOpened(null)
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** Запоминает текущее дерево под новым именем, чтобы открыть его в следующий раз. */
+  async function savePreset() {
+    const source = draft
+    if (!source) return
+    const next = withHandoffs(materialize(source.steps))
+    setBusy(true)
+    setError(null)
+    setPresetNote(null)
+    try {
+      const preset = await api.createPreset({
+        name: presetName,
+        steps: next.map((step) => ({
+          key: step.id,
+          agentId: step.agentId,
+          title: step.title,
+          mode: step.mode,
+          handoff: step.handoff,
+          nextKeys: step.nextIds,
+        })),
+      })
+      upsertPreset(preset)
+      setPicked(preset.id)
+      setPresetName('')
+      setPresetNote(`Пресет «${preset.name}» сохранён. Его можно выбрать в списке.`)
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function dropPreset() {
+    const current = presets.find((item) => item.id === pickedId)
+    if (!current || current.builtin || locked) return
+    setBusy(true)
+    setError(null)
+    setPresetNote(null)
+    try {
+      await api.deletePreset(current.id)
+      removePreset(current.id)
+      setPicked(presets.find((item) => item.id !== current.id)?.id ?? '')
+      setPresetNote(`Пресет «${current.name}» удалён.`)
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function start() {
     const next = withHandoffs(materialize(draft.steps))
     setBusy(true)
@@ -335,6 +415,61 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
         </div>
       </div>
       <aside className="side">
+        <section className="preset-box" data-testid="preset-panel">
+          <h2>Пресет</h2>
+          <p className="hint">Готовая цепочка по имени. Текущее дерево можно сохранить и открыть снова.</p>
+          {pickedPreset ? (
+            <DarkSelect
+              testId="preset-pick"
+              value={pickedPreset.id}
+              disabled={locked || busy}
+              options={presets.map((item) => ({ value: item.id, label: item.name }))}
+              onChange={setPicked}
+            />
+          ) : (
+            <p className="hint">Пресетов пока нет.</p>
+          )}
+          {pickedPreset ? (
+            <p className="hint" data-testid="preset-preview">
+              {pickedPreset.steps.map((step) => step.title).join(' → ')}
+            </p>
+          ) : null}
+          <div className="row-actions">
+            <button
+              type="button"
+              data-testid="apply-preset"
+              disabled={busy || locked || !pickedPreset}
+              onClick={() => void applyPreset()}
+            >
+              Поставить на холст
+            </button>
+            {pickedPreset && !pickedPreset.builtin ? (
+              <button type="button" className="text-btn" data-testid="delete-preset" disabled={busy || locked} onClick={() => void dropPreset()}>
+                Удалить
+              </button>
+            ) : null}
+          </div>
+          <label className="field">
+            <span>Имя своего пресета</span>
+            <input
+              data-testid="preset-name"
+              value={presetName}
+              disabled={locked}
+              maxLength={80}
+              placeholder="Например, Выкладка"
+              onChange={(event) => setPresetName(event.target.value)}
+            />
+          </label>
+          <button
+            type="button"
+            data-testid="save-preset"
+            disabled={busy || locked || !presetName.trim() || steps.length === 0}
+            onClick={() => void savePreset()}
+          >
+            Сохранить пресет
+          </button>
+          {presetNote ? <p className="ok-line">{presetNote}</p> : null}
+        </section>
         <label className="field">
           <span>Процесс</span>
           <input

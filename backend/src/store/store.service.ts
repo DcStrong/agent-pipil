@@ -5,6 +5,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import {
   createSeedState,
+  ensureSeedPresets,
   ensureSeedRoles,
   parseState,
   type Run,
@@ -22,7 +23,13 @@ export class StoreService {
     const loaded = this.loadFromDisk();
     this.state = loaded.state;
     const rolesAdded = ensureSeedRoles(this.state);
-    if (loaded.wroteSeed || rolesAdded || this.failInterruptedRuns()) {
+    const presetsAdded = ensureSeedPresets(this.state);
+    if (
+      loaded.wroteSeed ||
+      rolesAdded ||
+      presetsAdded ||
+      this.failInterruptedRuns()
+    ) {
       this.enqueueWrite();
     }
   }

@@ -385,7 +385,7 @@ button.primary, .primary {
   padding: 10px 14px;
   font-weight: 650;
 }
-button:not(.primary):not(.icon-btn):not(.text-btn):not(.node):not(.menu-item):not(.dark-select-btn):not(.decision-btn) {
+button:not(.primary):not(.icon-btn):not(.text-btn):not(.node):not(.menu-item):not(.dark-select-btn):not(.decision-btn):not(.preset-card) {
   border: 1px solid #34343a;
   border-radius: 10px;
   background: #1b1b1f;
@@ -434,6 +434,38 @@ button:disabled { opacity: 0.45; cursor: default; }
 .result h2, .editor h2, .details h2, .form-card h2 { margin: 0 0 8px; font-size: 16px; }
 .result p { white-space: pre-wrap; line-height: 1.45; font-size: 14px; }
 .editor { display: flex; flex-direction: column; gap: 10px; padding-top: 8px; border-top: 1px solid #222226; }
+.preset-board { margin-bottom: 16px; }
+.preset-lead { margin: 0; padding: 12px 16px 0; color: var(--muted); font-size: 13px; line-height: 1.4; }
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 10px;
+  padding: 12px 16px 16px;
+}
+.preset-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  padding: 14px;
+  text-align: left;
+  border: 1px solid #2a2a30;
+  border-radius: 14px;
+  background: #141416;
+}
+.preset-card strong { font-size: 15px; }
+.preset-card p, .preset-card small { color: var(--muted); font-size: 13px; line-height: 1.4; }
+.preset-card small { color: var(--faint); }
+.preset-card:hover:not(:disabled) { border-color: #4a4a52; }
+.preset-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #222226;
+}
+.preset-box h2 { margin: 0; font-size: 16px; }
 .roles { display: flex; flex-direction: column; gap: 6px; }
 .role-row {
   display: grid;

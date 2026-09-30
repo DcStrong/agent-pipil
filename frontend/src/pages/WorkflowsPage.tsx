@@ -1,22 +1,65 @@
-/** Сводка процессов, агентов в сети и таблицы запусков. */
+/** Сводка процессов, агентов в сети и таблицы запусков. Пресет открывает готовую цепочку. */
 import { useState } from 'react'
+import { api, messageOf } from '../api'
 import { IconNodes, IconPlus } from '../components/Icons'
 import { SetupModal } from '../components/SetupModal'
 import { agentOnline, progress, statusLabel, taskTitle, when } from '../format'
 import { useLive } from '../live'
 import { href } from '../route'
+import type { PipelinePreset } from '../types'
 
 export function WorkflowsPage() {
-  const { ready, error, workflows, agents, runs, cursor } = useLive()
+  const { ready, error, workflows, agents, runs, cursor, presets, upsertWorkflow } = useLive()
   const [setup, setSetup] = useState(false)
+  const [opening, setOpening] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
   const connected = cursor?.connected ?? false
   const online = agents.filter((agent) => agentOnline(agent, connected)).length
+
+  async function openPreset(preset: PipelinePreset) {
+    setOpening(preset.id)
+    setActionError(null)
+    try {
+      const workflow = await api.openPreset(preset.id)
+      upsertWorkflow(workflow)
+      window.location.hash = href({ name: 'canvas', workflowId: workflow.id })
+    } catch (reason) {
+      setActionError(messageOf(reason))
+    } finally {
+      setOpening(null)
+    }
+  }
 
   return (
     <div className="page">
       <h1 className="page-title">Процессы</h1>
       {error ? <p className="banner">{error}</p> : null}
+      {actionError ? <p className="banner">{actionError}</p> : null}
       {!ready && !error ? <p className="muted">Загрузка…</p> : null}
+      {ready ? (
+        <section className="card preset-board">
+          <header className="card-head">
+            <span>Пресеты</span>
+          </header>
+          <p className="preset-lead">Выберите имя — на холсте появится эта цепочка. Свою можно сохранить с холста.</p>
+          <div className="preset-grid">
+            {presets.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                className="preset-card"
+                data-testid={preset.id}
+                disabled={opening !== null}
+                onClick={() => void openPreset(preset)}
+              >
+                <strong>{preset.name}</strong>
+                <small>{preset.builtin ? 'Встроенный' : 'Свой'}</small>
+                <p>{preset.steps.map((step) => step.title).join(' → ')}</p>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
       <div className="dash">
         <div className="stack">
           <section className="card">

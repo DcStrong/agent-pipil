@@ -75,6 +75,32 @@ export interface Workflow {
   steps: WorkflowStep[]
 }
 
+/** Шаг сохранённой цепочки. У встроенных agentId пустой, роль выбирается по kind. */
+export interface PresetStep {
+  key: string
+  agentId: string | null
+  kind: AgentKind
+  title: string
+  mode: StepMode
+  handoff: string
+  nextKeys: string[]
+}
+
+export interface PipelinePreset {
+  id: string
+  name: string
+  description: string
+  builtin: boolean
+  steps: PresetStep[]
+}
+
+/** Готовые шаги пресета с новыми id, чтобы поставить их на холст. */
+export interface PresetSteps {
+  name: string
+  description: string
+  steps: WorkflowStep[]
+}
+
 export interface StepWork {
   stepId: string
   agentId: string

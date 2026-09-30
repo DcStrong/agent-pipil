@@ -14,18 +14,9 @@ export type Harness = 'simulated' | 'cursor';
 export type StepMode = 'automatic' | 'approval' | 'question';
 export type SkillScope = 'shared' | 'agent';
 export type RunStatus =
-  | 'running'
-  | 'waiting_approval'
-  | 'waiting_user'
-  | 'completed'
-  | 'failed';
+  'running' | 'waiting_approval' | 'waiting_user' | 'completed' | 'failed';
 export type RunEventKind =
-  | 'progress'
-  | 'handoff'
-  | 'approval'
-  | 'question'
-  | 'error'
-  | 'done';
+  'progress' | 'handoff' | 'approval' | 'question' | 'error' | 'done';
 export type ReturnShape = 'object' | 'array' | 'none';
 export type DialogueAuthor = 'role' | 'user' | 'handoff';
 
@@ -60,6 +51,26 @@ export interface Workflow {
   name: string;
   description: string;
   steps: WorkflowStep[];
+}
+
+/** Шаг именованного пресета. У встроенных agentId пустой: роль берётся по kind. */
+export interface PresetStep {
+  key: string;
+  agentId: string | null;
+  kind: AgentKind;
+  title: string;
+  mode: StepMode;
+  handoff: string;
+  nextKeys: string[];
+}
+
+/** Сохранённый конвейер. Его выбирают по имени, не собирая дерево заново. */
+export interface PipelinePreset {
+  id: string;
+  name: string;
+  description: string;
+  builtin: boolean;
+  steps: PresetStep[];
 }
 
 export interface AgentSkillSnapshot {
@@ -163,6 +174,8 @@ export interface State {
   agents: Agent[];
   skills: Skill[];
   workflows: Workflow[];
+  /** Встроенные и сохранённые пользователем цепочки. */
+  presets: PipelinePreset[];
   runs: Run[];
   /** Секрет хранится только на сервере и не уходит в браузер целиком. */
   cursorToken: string | null;
@@ -304,6 +317,180 @@ export function ensureSeedRoles(state: State): boolean {
   return changed;
 }
 
+type PresetDraft = Omit<PresetStep, 'nextKeys'>;
+
+function chain(steps: PresetDraft[]): PresetStep[] {
+  return steps.map((step, index) => {
+    const follower = steps[index + 1];
+    return {
+      ...step,
+      nextKeys: follower ? [follower.key] : [],
+    };
+  });
+}
+
+function presetStep(
+  key: string,
+  kind: AgentKind,
+  title: string,
+  mode: StepMode,
+  handoff: string,
+): PresetDraft {
+  return { key, agentId: null, kind, title, mode, handoff };
+}
+
+/**
+ * Шесть готовых цепочек. Порядок шагов — это порядок на холсте.
+ * «Вопрос» — один оркестратор в режиме вопроса, без шага с кодом.
+ */
+export function seedPresets(): PipelinePreset[] {
+  return [
+    {
+      id: 'preset_feature',
+      name: 'Фича',
+      description: 'Оркестратор, аналитик, архитектор, разработчик и ревьюер.',
+      builtin: true,
+      steps: chain([
+        presetStep(
+          'feature_orchestrator',
+          'orchestrator',
+          'Оркестратор',
+          'automatic',
+          'Передай цель, уже принятое решение и следующий шаг.',
+        ),
+        presetStep(
+          'feature_analyst',
+          'analyst',
+          'Аналитик',
+          'automatic',
+          'Передай рамку задачи и то, что в неё не входит.',
+        ),
+        presetStep(
+          'feature_architect',
+          'architect',
+          'Архитектор',
+          'question',
+          'Передай контракт, который подтвердил владелец.',
+        ),
+        presetStep(
+          'feature_developer',
+          'developer',
+          'Бэкенд-разработчик',
+          'automatic',
+          'Передай, что изменено и как это проверить.',
+        ),
+        presetStep('feature_reviewer', 'reviewer', 'Ревьюер', 'approval', ''),
+      ]),
+    },
+    {
+      id: 'preset_testing',
+      name: 'Тестирование',
+      description: 'Разработчик, затем тестировщик, затем ревьюер.',
+      builtin: true,
+      steps: chain([
+        presetStep(
+          'testing_developer',
+          'developer',
+          'Бэкенд-разработчик',
+          'automatic',
+          'Передай изменения, которые нужно проверить.',
+        ),
+        presetStep(
+          'testing_tester',
+          'tester',
+          'Тестировщик',
+          'automatic',
+          'Передай результат прогона и что осталось несовпавшим.',
+        ),
+        presetStep('testing_reviewer', 'reviewer', 'Ревьюер', 'approval', ''),
+      ]),
+    },
+    {
+      id: 'preset_refactor',
+      name: 'Рефакторинг',
+      description: 'Только разработчик и ревьюер. Аналитика и архитектора нет.',
+      builtin: true,
+      steps: chain([
+        presetStep(
+          'refactor_developer',
+          'developer',
+          'Бэкенд-разработчик',
+          'automatic',
+          'Передай, что перестроено и какое поведение нельзя менять.',
+        ),
+        presetStep('refactor_reviewer', 'reviewer', 'Ревьюер', 'approval', ''),
+      ]),
+    },
+    {
+      id: 'preset_plan',
+      name: 'План',
+      description: 'Оркестратор, аналитик и архитектор. Шага с кодом нет.',
+      builtin: true,
+      steps: chain([
+        presetStep(
+          'plan_orchestrator',
+          'orchestrator',
+          'Оркестратор',
+          'automatic',
+          'Передай цель и что ещё не решено.',
+        ),
+        presetStep(
+          'plan_analyst',
+          'analyst',
+          'Аналитик',
+          'automatic',
+          'Передай рамку, не выбирая реализацию.',
+        ),
+        presetStep('plan_architect', 'architect', 'Архитектор', 'question', ''),
+      ]),
+    },
+    {
+      id: 'preset_bug',
+      name: 'Баг',
+      description: 'Аналитик, разработчик и тестировщик.',
+      builtin: true,
+      steps: chain([
+        presetStep(
+          'bug_analyst',
+          'analyst',
+          'Аналитик',
+          'automatic',
+          'Передай, в чём сбой и как его узнать.',
+        ),
+        presetStep(
+          'bug_developer',
+          'developer',
+          'Бэкенд-разработчик',
+          'automatic',
+          'Передай правку и как убедиться, что сбой ушёл.',
+        ),
+        presetStep('bug_tester', 'tester', 'Тестировщик', 'automatic', ''),
+      ]),
+    },
+    {
+      id: 'preset_question',
+      name: 'Вопрос',
+      description: 'Один агент в режиме вопроса. Сборки и шага с кодом нет.',
+      builtin: true,
+      steps: chain([
+        presetStep('question_ask', 'orchestrator', 'Вопрос', 'question', ''),
+      ]),
+    },
+  ];
+}
+
+/** Добавляет недостающие встроенные пресеты и не трогает сохранённые пользователем. */
+export function ensureSeedPresets(state: State): boolean {
+  if (!Array.isArray(state.presets)) state.presets = [];
+  let changed = false;
+  for (const preset of seedPresets()) {
+    if (state.presets.some((item) => item.id === preset.id)) continue;
+    state.presets.push(structuredClone(preset));
+    changed = true;
+  }
+  return changed;
+}
+
 export function createSeedState(): State {
   return {
     agents: [
@@ -406,6 +593,7 @@ export function createSeedState(): State {
         ],
       },
     ],
+    presets: seedPresets(),
     runs: [],
     cursorToken: null,
   };
@@ -520,6 +708,34 @@ function parseWorkflow(value: unknown): Workflow {
     name: text(value.name, 'имя процесса'),
     description: text(value.description, 'описание процесса'),
     steps: value.steps.map(parseStep),
+  };
+}
+
+function parsePresetStep(value: unknown): PresetStep {
+  if (!isRecord(value)) fail('шаг пресета');
+  const agentId = value.agentId;
+  if (agentId !== null && typeof agentId !== 'string') fail('агент пресета');
+  if (!Array.isArray(value.nextKeys)) fail('связи пресета');
+  return {
+    key: text(value.key, 'ключ шага пресета'),
+    agentId,
+    kind: agentKind(value.kind),
+    title: text(value.title, 'название шага пресета'),
+    mode: stepMode(value.mode),
+    handoff: text(value.handoff, 'передача пресета'),
+    nextKeys: value.nextKeys.map((item) => text(item, 'связь пресета')),
+  };
+}
+
+function parsePreset(value: unknown): PipelinePreset {
+  if (!isRecord(value) || !Array.isArray(value.steps)) fail('пресет');
+  if (typeof value.builtin !== 'boolean') fail('признак пресета');
+  return {
+    id: text(value.id, 'id пресета'),
+    name: text(value.name, 'имя пресета'),
+    description: text(value.description, 'описание пресета'),
+    builtin: value.builtin,
+    steps: value.steps.map(parsePresetStep),
   };
 }
 
@@ -703,8 +919,7 @@ function parseRun(value: unknown): Run {
     createdAt: text(value.createdAt, 'создание запуска'),
     updatedAt: text(value.updatedAt, 'обновление запуска'),
     finishedAt,
-    project:
-      value.project === undefined ? null : parseProject(value.project),
+    project: value.project === undefined ? null : parseProject(value.project),
     developerShape: parseShape(value.developerShape),
     pendingQuestion:
       typeof value.pendingQuestion === 'string' ? value.pendingQuestion : null,
@@ -723,12 +938,16 @@ export function parseState(value: unknown): State {
   ) {
     fail('файл');
   }
+  if (value.presets !== undefined && !Array.isArray(value.presets)) {
+    fail('пресеты');
+  }
   const cursorToken = value.cursorToken;
   if (cursorToken !== null && typeof cursorToken !== 'string') fail('токен');
   return {
     agents: value.agents.map(parseAgent),
     skills: value.skills.map(parseSkill),
     workflows: value.workflows.map(parseWorkflow),
+    presets: Array.isArray(value.presets) ? value.presets.map(parsePreset) : [],
     runs: value.runs.map(parseRun),
     cursorToken,
   };
