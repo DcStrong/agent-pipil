@@ -1,8 +1,19 @@
-export type AgentKind = 'planner' | 'builder' | 'reviewer' | 'custom'
+export type AgentKind =
+  | 'orchestrator'
+  | 'analyst'
+  | 'architect'
+  | 'developer'
+  | 'tester'
+  | 'planner'
+  | 'builder'
+  | 'reviewer'
+  | 'custom'
 export type Harness = 'simulated' | 'cursor'
-export type StepMode = 'automatic' | 'approval'
+export type StepMode = 'automatic' | 'approval' | 'question'
 export type SkillScope = 'shared' | 'agent'
-export type RunStatus = 'running' | 'waiting_approval' | 'completed' | 'failed'
+export type RunStatus = 'running' | 'waiting_approval' | 'waiting_user' | 'completed' | 'failed'
+export type ReturnShape = 'object' | 'array' | 'none'
+export type DialogueAuthor = 'role' | 'user' | 'handoff'
 
 export interface Agent {
   id: string
@@ -18,6 +29,34 @@ export interface Skill {
   instructions: string
   scope: SkillScope
   agentId: string | null
+}
+
+export interface HandoffBrief {
+  goal: string
+  decided: string
+  now: string
+}
+
+export interface DialogueMessage {
+  id: string
+  at: string
+  author: DialogueAuthor
+  text: string
+}
+
+export interface ProjectSnapshot {
+  folder: string | null
+  available: boolean
+  rules: string[]
+  skills: string[]
+  commands: string[]
+  mapPath: string | null
+  mapText: string | null
+  mapMissing: boolean
+  pointedAtMap: boolean
+  surveyed: boolean
+  survey: string[]
+  tests: string[]
 }
 
 export interface WorkflowStep {
@@ -49,7 +88,7 @@ export interface StepWork {
 export interface RunEvent {
   id: string
   at: string
-  kind: 'progress' | 'handoff' | 'approval' | 'error' | 'done'
+  kind: 'progress' | 'handoff' | 'approval' | 'question' | 'error' | 'done'
   message: string
   stepIndex: number | null
 }
@@ -64,6 +103,12 @@ export interface RunStep {
   instructions: string
   harness: Harness
   skills: Array<{ name: string; instructions: string; scope: SkillScope }>
+  dialogueId: string
+  kind: AgentKind
+  messages: DialogueMessage[]
+  brief: HandoffBrief | null
+  question: string | null
+  mapAddition: string | null
 }
 
 export interface Run {
@@ -81,6 +126,11 @@ export interface Run {
   createdAt: string
   updatedAt: string
   finishedAt: string | null
+  project: ProjectSnapshot | null
+  developerShape: ReturnShape
+  pendingQuestion: string | null
+  mapWritten: boolean
+  mapNote: string | null
 }
 
 export interface CursorConnection {

@@ -1,6 +1,6 @@
 import { ConflictException } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SettingsService } from '../settings/settings.service';
@@ -145,5 +145,96 @@ describe('RunsService', () => {
       source: 'none',
       hint: null,
     });
+  });
+
+  async function until(
+    runs: RunsService,
+    id: string,
+    status: string,
+  ) {
+    let current = runs.get(id);
+    for (let attempt = 0; attempt < 30 && current.status !== status; attempt += 1) {
+      await settle();
+      current = runs.get(id);
+    }
+    return current;
+  }
+
+  it('даёт каждой роли новый диалог и ждёт ответ архитектора', async () => {
+    const { runs } = await make();
+    const first = runs.start('workflow_supervised', 'Нужен массив объектов заказов', {
+      roleIds: ['role_architect', 'role_developer', 'role_orchestrator', 'role_analyst'],
+    });
+    expect(first.steps.map((step) => step.kind)).toEqual([
+      'orchestrator',
+      'analyst',
+      'architect',
+      'developer',
+    ]);
+    const ids = first.steps.map((step) => step.dialogueId);
+    expect(new Set(ids).size).toBe(4);
+
+    const waiting = await until(runs, first.id, 'waiting_user');
+    expect(waiting.status).toBe('waiting_user');
+    expect(waiting.pendingQuestion).toContain('массив объектов');
+    const architect = waiting.steps.find((step) => step.kind === 'architect');
+    const orchestrator = waiting.steps.find((step) => step.kind === 'orchestrator');
+    expect(architect?.messages.some((item) => item.author === 'user')).toBe(false);
+    expect(orchestrator?.messages.some((item) => item.author === 'user')).toBe(false);
+    expect(JSON.stringify(orchestrator?.messages)).not.toContain('ОТВЕТ-ВЛАДЕЛЬЦА-77');
+
+    runs.answer(first.id, 'ОТВЕТ-ВЛАДЕЛЬЦА-77 нужен массив объектов');
+    const done = await until(runs, first.id, 'completed');
+    expect(done.status).toBe('completed');
+    const architectDone = done.steps.find((step) => step.kind === 'architect');
+    const orchestratorDone = done.steps.find((step) => step.kind === 'orchestrator');
+    expect(architectDone?.messages.some((item) => item.author === 'user' && item.text.includes('ОТВЕТ-ВЛАДЕЛЬЦА-77'))).toBe(true);
+    expect(JSON.stringify(orchestratorDone?.messages)).not.toContain('ОТВЕТ-ВЛАДЕЛЬЦА-77');
+    expect(
+      orchestratorDone?.messages.some(
+        (item) =>
+          item.text.includes('не переписываю') ||
+          item.text.includes('записал') ||
+          item.text.includes('не пишу'),
+      ),
+    ).toBe(true);
+
+    const second = runs.start('workflow_supervised', 'Вторая задача без старого чата', {
+      roleIds: ['role_orchestrator', 'role_analyst'],
+    });
+    expect(second.steps.map((step) => step.dialogueId).some((id) => ids.includes(id))).toBe(false);
+    await until(runs, second.id, 'completed');
+  });
+
+  it('не копирует .cursor в диалоги, а карту пишет только оркестратор', async () => {
+    const { runs } = await make();
+    const root = join(directory, 'proj');
+    await mkdir(join(root, '.cursor', 'rules'), { recursive: true });
+    await mkdir(join(root, '.cursor', 'skills', 'demo'), { recursive: true });
+    await writeFile(join(root, '.cursor', 'rules', 'rule.mdc'), 'SECRET_RULE_BODY');
+    await writeFile(join(root, '.cursor', 'skills', 'demo', 'SKILL.md'), 'SKILL_SECRET');
+    const started = runs.start('workflow_supervised', 'нужен массив объектов', {
+      roleIds: ['role_orchestrator', 'role_developer', 'role_tester'],
+      projectPath: root,
+    });
+    const done = await until(runs, started.id, 'completed');
+    expect(done.status).toBe('completed');
+    const blob = JSON.stringify(done.steps.map((step) => step.messages));
+    expect(blob).not.toContain('SECRET_RULE_BODY');
+    expect(blob).not.toContain('SKILL_SECRET');
+    expect(blob).toContain('.cursor/rules/rule.mdc');
+    expect(blob).toContain('.cursor/skills/demo/SKILL.md');
+    const tester = done.steps.find((step) => step.kind === 'tester');
+    expect(JSON.stringify(tester?.messages)).not.toContain('Новый диалог этой задачи');
+    expect(tester?.messages.some((item) => item.text.includes('Чужие диалоги не читал'))).toBe(true);
+    expect(tester?.messages.some((item) => item.text.includes('один объект'))).toBe(true);
+    const developer = done.steps.find((step) => step.kind === 'developer');
+    expect(done.work.filter((item) => item.stepId === developer?.stepId)).toHaveLength(2);
+    expect(done.mapWritten).toBe(true);
+    const map = await readFile(join(root, '.pipil', 'карта.md'), 'utf8');
+    expect(map).toContain('Владение');
+    expect(done.steps.filter((step) => step.kind !== 'orchestrator').every((step) =>
+      step.messages.every((item) => !item.text.includes('записал её в конце')),
+    )).toBe(true);
   });
 });

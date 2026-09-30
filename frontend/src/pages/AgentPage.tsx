@@ -206,9 +206,11 @@ export function AgentPage({ agentId }: { agentId: string }) {
           <label className="field">
             <span>Тип</span>
             <select value={kind} onChange={(event) => setKind(event.target.value as AgentKind)}>
-              <option value="planner">Планировщик</option>
-              <option value="builder">Сборщик</option>
-              <option value="reviewer">Ревьюер</option>
+              <option value="orchestrator">Оркестратор</option>
+              <option value="analyst">Аналитик</option>
+              <option value="architect">Архитектор</option>
+              <option value="developer">Бэкенд-разработчик</option>
+              <option value="tester">Тестировщик</option>
               <option value="custom">Свой</option>
             </select>
           </label>

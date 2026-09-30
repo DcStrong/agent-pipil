@@ -1,12 +1,33 @@
 /** Модель локального оркестратора: агенты, шаги, точки проверки и запуски. */
 
-export type AgentKind = 'planner' | 'builder' | 'reviewer' | 'custom';
+export type AgentKind =
+  | 'orchestrator'
+  | 'analyst'
+  | 'architect'
+  | 'developer'
+  | 'tester'
+  | 'planner'
+  | 'builder'
+  | 'reviewer'
+  | 'custom';
 export type Harness = 'simulated' | 'cursor';
-export type StepMode = 'automatic' | 'approval';
+export type StepMode = 'automatic' | 'approval' | 'question';
 export type SkillScope = 'shared' | 'agent';
-export type RunStatus = 'running' | 'waiting_approval' | 'completed' | 'failed';
+export type RunStatus =
+  | 'running'
+  | 'waiting_approval'
+  | 'waiting_user'
+  | 'completed'
+  | 'failed';
 export type RunEventKind =
-  'progress' | 'handoff' | 'approval' | 'error' | 'done';
+  | 'progress'
+  | 'handoff'
+  | 'approval'
+  | 'question'
+  | 'error'
+  | 'done';
+export type ReturnShape = 'object' | 'array' | 'none';
+export type DialogueAuthor = 'role' | 'user' | 'handoff';
 
 export interface Agent {
   id: string;
@@ -45,6 +66,36 @@ export interface AgentSkillSnapshot {
   scope: SkillScope;
 }
 
+/** Короткая передача: цель, что уже решено, что делать сейчас. Чужой диалог сюда не входит. */
+export interface HandoffBrief {
+  goal: string;
+  decided: string;
+  now: string;
+}
+
+export interface DialogueMessage {
+  id: string;
+  at: string;
+  author: DialogueAuthor;
+  text: string;
+}
+
+/** Снимок папки проекта. В диалог попадают пути, а не текст правил и навыков. */
+export interface ProjectSnapshot {
+  folder: string | null;
+  available: boolean;
+  rules: string[];
+  skills: string[];
+  commands: string[];
+  mapPath: string | null;
+  mapText: string | null;
+  mapMissing: boolean;
+  pointedAtMap: boolean;
+  surveyed: boolean;
+  survey: string[];
+  tests: string[];
+}
+
 export interface RunStep {
   stepId: string;
   agentId: string;
@@ -55,6 +106,13 @@ export interface RunStep {
   instructions: string;
   harness: Harness;
   skills: AgentSkillSnapshot[];
+  /** Новый диалог на каждую задачу. Старые запуски его не переиспользуют. */
+  dialogueId: string;
+  kind: AgentKind;
+  messages: DialogueMessage[];
+  brief: HandoffBrief | null;
+  question: string | null;
+  mapAddition: string | null;
 }
 
 export interface StepWork {
@@ -91,6 +149,12 @@ export interface Run {
   createdAt: string;
   updatedAt: string;
   finishedAt: string | null;
+  project: ProjectSnapshot | null;
+  /** Какой формы объект вернул разработчик в последний раз. */
+  developerShape: ReturnShape;
+  pendingQuestion: string | null;
+  mapWritten: boolean;
+  mapNote: string | null;
 }
 
 export interface State {
@@ -113,6 +177,12 @@ export interface AgentContext {
   outgoingHandoff: string;
   isFinalStep: boolean;
   requiresApproval: boolean;
+  kind: AgentKind;
+  brief: HandoffBrief | null;
+  answer: string | null;
+  project: ProjectSnapshot | null;
+  developerShape: ReturnShape;
+  developerPasses: number;
 }
 
 export interface AgentTurn {
@@ -138,6 +208,100 @@ const REVIEWER_INSTRUCTIONS = [
   'Закончи разделом «Итог», который можно прочитать отдельно.',
 ].join(' ');
 
+const ROLE_ORDER: AgentKind[] = [
+  'orchestrator',
+  'analyst',
+  'architect',
+  'developer',
+  'tester',
+];
+
+/** Четыре рабочие роли и отдельный тестировщик. Имена можно править вручную. */
+export function seedRoles(): Agent[] {
+  return [
+    {
+      id: 'role_orchestrator',
+      name: 'Оркестратор',
+      kind: 'orchestrator',
+      harness: 'simulated',
+      instructions: [
+        'Ты оркестратор.',
+        'На каждую задачу у тебя новый диалог.',
+        'Передавай дальше только цель, уже принятое решение и следующий шаг.',
+        'Не отвечай за владельца, если роль задала вопрос.',
+        'Карту проекта пишешь только ты и только в конце, если она изменилась.',
+        'Навыки, команды и правила из .cursor в сообщения не копируй.',
+      ].join(' '),
+    },
+    {
+      id: 'role_analyst',
+      name: 'Аналитик',
+      kind: 'analyst',
+      harness: 'simulated',
+      instructions: [
+        'Ты аналитик.',
+        'Держись задачи и карты проекта.',
+        'Чужой диалог не продолжай: бери только короткую передачу.',
+        'Если карте чего-то не хватает, сообщи, что добавить. Сам файл не пиши.',
+      ].join(' '),
+    },
+    {
+      id: 'role_architect',
+      name: 'Архитектор',
+      kind: 'architect',
+      harness: 'simulated',
+      instructions: [
+        'Ты архитектор.',
+        'Если без владельца нельзя выбрать контракт, спроси и жди.',
+        'Не придумывай ответ за него.',
+        'В передаче оставь только цель, решение и что делать сейчас.',
+      ].join(' '),
+    },
+    {
+      id: 'role_developer',
+      name: 'Бэкенд-разработчик',
+      kind: 'developer',
+      harness: 'simulated',
+      instructions: [
+        'Ты бэкенд-разработчик.',
+        'Делай только то, что уже решено в передаче.',
+        'Если тестировщик вернул несовпадение контракта, поправь ответ, а не спор.',
+      ].join(' '),
+    },
+    {
+      id: 'role_tester',
+      name: 'Тестировщик',
+      kind: 'tester',
+      harness: 'simulated',
+      instructions: [
+        'Ты тестировщик.',
+        'Можно читать весь проект, включая внешние края вроде Rabbit.',
+        'Чужие диалоги читать нельзя.',
+        'Сначала ищи существующие тесты и прогоняй их.',
+        'Если тестов нет, напиши и прогони.',
+        'Если падающий тест не про контракт задачи, исправь тест.',
+        'Если код вернул не ту форму, верни это разработчику.',
+      ].join(' '),
+    },
+  ];
+}
+
+export function roleOrder(kind: AgentKind): number {
+  const index = ROLE_ORDER.indexOf(kind);
+  return index === -1 ? ROLE_ORDER.length : index;
+}
+
+/** Добавляет недостающие роли в уже сохранённое состояние, не трогая процессы. */
+export function ensureSeedRoles(state: State): boolean {
+  let changed = false;
+  for (const role of seedRoles()) {
+    if (state.agents.some((agent) => agent.id === role.id)) continue;
+    state.agents.push(role);
+    changed = true;
+  }
+  return changed;
+}
+
 export function createSeedState(): State {
   return {
     agents: [
@@ -162,6 +326,7 @@ export function createSeedState(): State {
         instructions: REVIEWER_INSTRUCTIONS,
         harness: 'simulated',
       },
+      ...seedRoles(),
     ],
     skills: [
       {
@@ -241,6 +406,23 @@ export function createSeedState(): State {
   };
 }
 
+export function emptyProject(): ProjectSnapshot {
+  return {
+    folder: null,
+    available: false,
+    rules: [],
+    skills: [],
+    commands: [],
+    mapPath: null,
+    mapText: null,
+    mapMissing: true,
+    pointedAtMap: false,
+    surveyed: false,
+    survey: [],
+    tests: [],
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -256,6 +438,11 @@ function text(value: unknown, label: string): string {
 
 function agentKind(value: unknown): AgentKind {
   if (
+    value === 'orchestrator' ||
+    value === 'analyst' ||
+    value === 'architect' ||
+    value === 'developer' ||
+    value === 'tester' ||
     value === 'planner' ||
     value === 'builder' ||
     value === 'reviewer' ||
@@ -272,7 +459,9 @@ function harness(value: unknown): Harness {
 }
 
 function stepMode(value: unknown): StepMode {
-  if (value === 'automatic' || value === 'approval') return value;
+  if (value === 'automatic' || value === 'approval' || value === 'question') {
+    return value;
+  }
   return fail('режим шага');
 }
 
@@ -335,10 +524,74 @@ function parseSnapshotSkill(value: unknown): AgentSkillSnapshot {
   };
 }
 
+function parseAuthor(value: unknown): DialogueAuthor {
+  if (value === 'role' || value === 'user' || value === 'handoff') return value;
+  return fail('автор реплики');
+}
+
+function parseMessage(value: unknown): DialogueMessage {
+  if (!isRecord(value)) fail('реплика');
+  return {
+    id: text(value.id, 'id реплики'),
+    at: text(value.at, 'время реплики'),
+    author: parseAuthor(value.author),
+    text: text(value.text, 'текст реплики'),
+  };
+}
+
+function parseBrief(value: unknown): HandoffBrief | null {
+  if (value == null) return null;
+  if (!isRecord(value)) fail('передача');
+  return {
+    goal: text(value.goal, 'цель передачи'),
+    decided: text(value.decided, 'решение передачи'),
+    now: text(value.now, 'шаг передачи'),
+  };
+}
+
+function parseStringList(value: unknown, label: string): string[] {
+  if (!Array.isArray(value)) fail(label);
+  return value.map((item) => text(item, label));
+}
+
+function parseProject(value: unknown): ProjectSnapshot | null {
+  if (value == null) return null;
+  if (!isRecord(value)) fail('проект');
+  const folder = value.folder;
+  if (folder !== null && typeof folder !== 'string') fail('папка проекта');
+  const mapPath = value.mapPath;
+  const mapText = value.mapText;
+  if (mapPath !== null && typeof mapPath !== 'string') fail('путь карты');
+  if (mapText !== null && typeof mapText !== 'string') fail('текст карты');
+  return {
+    folder,
+    available: value.available === true,
+    rules: parseStringList(value.rules ?? [], 'правила'),
+    skills: parseStringList(value.skills ?? [], 'навыки проекта'),
+    commands: parseStringList(value.commands ?? [], 'команды'),
+    mapPath,
+    mapText,
+    mapMissing: value.mapMissing !== false,
+    pointedAtMap: value.pointedAtMap === true,
+    surveyed: value.surveyed === true,
+    survey: parseStringList(value.survey ?? [], 'обзор'),
+    tests: parseStringList(value.tests ?? [], 'тесты'),
+  };
+}
+
+function parseShape(value: unknown): ReturnShape {
+  if (value === 'object' || value === 'array' || value === 'none') return value;
+  return 'none';
+}
+
 function parseRunStep(value: unknown): RunStep {
   if (!isRecord(value) || !Array.isArray(value.skills)) fail('шаг запуска');
+  const stepId = text(value.stepId, 'id шага запуска');
+  const messages = Array.isArray(value.messages)
+    ? value.messages.map(parseMessage)
+    : [];
   return {
-    stepId: text(value.stepId, 'id шага запуска'),
+    stepId,
     agentId: text(value.agentId, 'агент запуска'),
     agentName: text(value.agentName, 'имя агента запуска'),
     title: text(value.title, 'название шага запуска'),
@@ -347,6 +600,16 @@ function parseRunStep(value: unknown): RunStep {
     instructions: text(value.instructions, 'инструкции запуска'),
     harness: harness(value.harness),
     skills: value.skills.map(parseSnapshotSkill),
+    dialogueId:
+      typeof value.dialogueId === 'string' && value.dialogueId
+        ? value.dialogueId
+        : stepId,
+    kind: value.kind === undefined ? 'custom' : agentKind(value.kind),
+    messages,
+    brief: parseBrief(value.brief),
+    question: typeof value.question === 'string' ? value.question : null,
+    mapAddition:
+      typeof value.mapAddition === 'string' ? value.mapAddition : null,
   };
 }
 
@@ -371,6 +634,7 @@ function parseEvent(value: unknown): RunEvent {
     kind !== 'progress' &&
     kind !== 'handoff' &&
     kind !== 'approval' &&
+    kind !== 'question' &&
     kind !== 'error' &&
     kind !== 'done'
   ) {
@@ -401,6 +665,7 @@ function parseRun(value: unknown): Run {
   if (
     status !== 'running' &&
     status !== 'waiting_approval' &&
+    status !== 'waiting_user' &&
     status !== 'completed' &&
     status !== 'failed'
   ) {
@@ -430,6 +695,13 @@ function parseRun(value: unknown): Run {
     createdAt: text(value.createdAt, 'создание запуска'),
     updatedAt: text(value.updatedAt, 'обновление запуска'),
     finishedAt,
+    project:
+      value.project === undefined ? null : parseProject(value.project),
+    developerShape: parseShape(value.developerShape),
+    pendingQuestion:
+      typeof value.pendingQuestion === 'string' ? value.pendingQuestion : null,
+    mapWritten: value.mapWritten === true,
+    mapNote: typeof value.mapNote === 'string' ? value.mapNote : null,
   };
 }
 

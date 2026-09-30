@@ -3,11 +3,17 @@ import type { Agent, AgentKind, Harness, Run, RunStatus } from './types'
 export function statusLabel(status: RunStatus): string {
   if (status === 'running') return 'Выполняется'
   if (status === 'waiting_approval') return 'Ждёт подтверждения'
+  if (status === 'waiting_user') return 'Ждёт ответа'
   if (status === 'completed') return 'Готово'
   return 'Ошибка'
 }
 
 export function kindLabel(kind: AgentKind): string {
+  if (kind === 'orchestrator') return 'Оркестратор'
+  if (kind === 'analyst') return 'Аналитик'
+  if (kind === 'architect') return 'Архитектор'
+  if (kind === 'developer') return 'Бэкенд-разработчик'
+  if (kind === 'tester') return 'Тестировщик'
   if (kind === 'planner') return 'Планировщик'
   if (kind === 'builder') return 'Сборщик'
   if (kind === 'reviewer') return 'Ревьюер'
@@ -78,6 +84,7 @@ export function eventTag(kind: Run['events'][number]['kind']): string {
   if (kind === 'progress') return 'прогресс'
   if (kind === 'handoff') return 'передача'
   if (kind === 'approval') return 'проверка'
+  if (kind === 'question') return 'вопрос'
   if (kind === 'done') return 'готово'
   return 'ошибка'
 }

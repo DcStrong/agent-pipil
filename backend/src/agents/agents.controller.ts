@@ -20,6 +20,11 @@ function asRecord(body: unknown): Record<string, unknown> {
 
 function kindOf(value: unknown): AgentKind {
   if (
+    value === 'orchestrator' ||
+    value === 'analyst' ||
+    value === 'architect' ||
+    value === 'developer' ||
+    value === 'tester' ||
     value === 'planner' ||
     value === 'builder' ||
     value === 'reviewer' ||
@@ -28,7 +33,7 @@ function kindOf(value: unknown): AgentKind {
     return value;
   }
   throw new BadRequestException(
-    'Тип агента: planner, builder, reviewer или custom.',
+    'Тип агента: orchestrator, analyst, architect, developer, tester или custom.',
   );
 }
 

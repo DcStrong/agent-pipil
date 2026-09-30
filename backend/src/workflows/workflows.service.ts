@@ -109,8 +109,14 @@ export class WorkflowsService {
       if (typeof step.title !== 'string' || !step.title.trim()) {
         throw new BadRequestException('У каждого шага должно быть название.');
       }
-      if (step.mode !== 'automatic' && step.mode !== 'approval') {
-        throw new BadRequestException('Режим шага: automatic или approval.');
+      if (
+        step.mode !== 'automatic' &&
+        step.mode !== 'approval' &&
+        step.mode !== 'question'
+      ) {
+        throw new BadRequestException(
+          'Режим шага: automatic, approval или question.',
+        );
       }
       if (typeof step.handoff !== 'string') {
         throw new BadRequestException(

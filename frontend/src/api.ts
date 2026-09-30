@@ -62,8 +62,26 @@ export const api = {
   ) => request<Workflow>(`/api/workflows/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
   runs: () => request<Run[]>('/api/runs'),
   run: (id: string) => request<Run>(`/api/runs/${id}`),
-  startRun: (workflowId: string, task: string) =>
-    request<Run>('/api/runs', { method: 'POST', body: JSON.stringify({ workflowId, task }) }),
+  startRun: (
+    workflowId: string,
+    task: string,
+    options?: { roleIds?: string[]; projectPath?: string; mapPath?: string },
+  ) =>
+    request<Run>('/api/runs', {
+      method: 'POST',
+      body: JSON.stringify({
+        workflowId,
+        task,
+        roleIds: options?.roleIds,
+        projectPath: options?.projectPath ?? null,
+        mapPath: options?.mapPath ?? null,
+      }),
+    }),
+  answer: (id: string, text: string) =>
+    request<Run>(`/api/runs/${id}/answer`, {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
   decide: (id: string, decision: 'approve' | 'reject') =>
     request<Run>(`/api/runs/${id}/decision`, {
       method: 'POST',

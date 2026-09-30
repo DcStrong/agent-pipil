@@ -5,14 +5,22 @@ import { api, messageOf } from '../api'
 import { finalText, statusLabel, taskTitle } from '../format'
 import { useLive } from '../live'
 import { href } from '../route'
-import type { StepMode, Workflow, WorkflowStep } from '../types'
+import type { AgentKind, StepMode, Workflow, WorkflowStep } from '../types'
+
+const TASK_ROLES: AgentKind[] = ['orchestrator', 'analyst', 'architect', 'developer', 'tester']
 
 export function CanvasPage({ workflowId }: { workflowId: string }) {
   const { ready, workflows, agents, runs, reload, upsertRun, upsertWorkflow } = useLive()
   const workflow = workflows.find((item) => item.id === workflowId)
   const [draft, setDraft] = useState<Workflow | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
-  const [task, setTask] = useState('Добавить экспорт в webp')
+  const [task, setTask] = useState('Нужен массив объектов заказов')
+  const [projectPath, setProjectPath] = useState('')
+  const [mapPath, setMapPath] = useState('')
+  const [picked, setPicked] = useState<string[]>([])
+  const [rolesReady, setRolesReady] = useState(false)
+  const [opened, setOpened] = useState<string | null>(null)
+  const [answer, setAnswer] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [missedId, setMissedId] = useState<string | null>(null)
@@ -49,8 +57,18 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
     }
   }, [ready, workflow, workflowId, upsertWorkflow])
 
+  useEffect(() => {
+    if (rolesReady) return
+    const defaults = agents.filter((agent) => TASK_ROLES.includes(agent.kind) && agent.kind !== 'tester')
+    if (defaults.length === 0) return
+    setPicked(defaults.map((agent) => agent.id))
+    setRolesReady(true)
+  }, [agents, rolesReady])
+
   const live = runs.find(
-    (run) => run.workflowId === workflowId && (run.status === 'running' || run.status === 'waiting_approval'),
+    (run) =>
+      run.workflowId === workflowId &&
+      (run.status === 'running' || run.status === 'waiting_approval' || run.status === 'waiting_user'),
   )
   const latest = runs.find((run) => run.workflowId === workflowId)
   const shown = live ?? latest ?? null
@@ -77,6 +95,21 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
 
   const steps = draft.steps
   const selectedStep = steps.find((step) => step.id === selected) ?? steps[0]
+  const roleAgents = agents
+    .filter((agent) => TASK_ROLES.includes(agent.kind))
+    .sort((left, right) => TASK_ROLES.indexOf(left.kind) - TASK_ROLES.indexOf(right.kind))
+  const roleRun = Boolean(shown?.steps.some((step) => TASK_ROLES.includes(step.kind)))
+  const flowSource = live || roleRun ? shown : null
+  const flow = flowSource
+    ? flowSource.steps.map((step) => ({ id: step.stepId, title: step.title, mode: step.mode }))
+    : roleAgents
+        .filter((agent) => picked.includes(agent.id))
+        .map((agent) => ({
+          id: agent.id,
+          title: agent.name,
+          mode: (agent.kind === 'architect' ? 'question' : 'automatic') as StepMode,
+        }))
+  const openedStep = flowSource?.steps.find((step) => step.stepId === opened) ?? null
 
   function patchStep(id: string, patch: Partial<WorkflowStep>) {
     setDraft((current) => {
@@ -121,8 +154,27 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
     setBusy(true)
     setError(null)
     try {
-      const run = await api.startRun(workflowId, task)
+      const run = await api.startRun(workflowId, task, {
+        roleIds: picked,
+        projectPath: projectPath.trim(),
+        mapPath: mapPath.trim(),
+      })
       upsertRun(run)
+      setOpened(run.steps[0]?.stepId ?? null)
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function sendAnswer() {
+    if (!live) return
+    setBusy(true)
+    setError(null)
+    try {
+      upsertRun(await api.answer(live.id, answer))
+      setAnswer('')
     } catch (reason) {
       setError(messageOf(reason))
     } finally {
@@ -155,11 +207,11 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
           </a>
           <LayoutGroup>
             <div className="flow" data-testid="canvas">
-              {shown ? (
+              {flowSource ? (
                 <>
                   <div className="flow-row">
                     <div className="node task-pill">
-                      <span className="node-title">{taskTitle(shown.task)}</span>
+                      <span className="node-title">{taskTitle(flowSource.task)}</span>
                       <span className="chev">›</span>
                     </div>
                     <div className="badge-slot" />
@@ -169,9 +221,9 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
                   </div>
                 </>
               ) : null}
-              {steps.map((step, index) => {
+              {flow.map((step, index) => {
                 const active = activeStepId === step.id
-                const done = Boolean(shown?.work.some((item) => item.stepId === step.id) && !active)
+                const done = Boolean(flowSource?.work.some((item) => item.stepId === step.id) && !active)
                 return (
                   <div key={step.id}>
                     <div className="flow-row">
@@ -185,12 +237,16 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
                         ]
                           .filter(Boolean)
                           .join(' ')}
-                        onClick={() => setSelected(step.id)}
+                        onClick={() => {
+                          if (steps.some((item) => item.id === step.id)) setSelected(step.id)
+                          setOpened(step.id)
+                        }}
                         data-testid={active ? 'active-step' : `step-${step.id}`}
                       >
                         <StepMark index={index} />
                         <span className="node-title">{step.title}</span>
                         {step.mode === 'approval' ? <span className="mode-chip">проверка</span> : null}
+                        {step.mode === 'question' ? <span className="mode-chip">вопрос</span> : null}
                         <span className="chev">›</span>
                       </button>
                       <div className="badge-slot">
@@ -199,7 +255,11 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
                             layoutId="live-badge"
                             className={live.status === 'waiting_approval' ? 'badge wait' : 'badge'}
                           >
-                            {live.status === 'waiting_approval' ? 'Ждёт подтверждения' : 'Выполняется'}
+                            {live.status === 'waiting_approval'
+                              ? 'Ждёт подтверждения'
+                              : live.status === 'waiting_user'
+                                ? 'Ждёт ответа'
+                                : 'Выполняется'}
                           </motion.span>
                         ) : null}
                       </div>
@@ -242,16 +302,92 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
             onChange={(event) => setDraft({ ...draft, description: event.target.value })}
           />
         </label>
+        <div className="roles">
+          <span className="kicker">Роли задачи</span>
+          {roleAgents.map((agent) => (
+            <label key={agent.id}>
+              <input
+                type="checkbox"
+                data-testid={`role-${agent.kind}`}
+                checked={picked.includes(agent.id)}
+                onChange={(event) => {
+                  setPicked((current) =>
+                    event.target.checked ? [...current, agent.id] : current.filter((id) => id !== agent.id),
+                  )
+                }}
+              />
+              {agent.name}
+            </label>
+          ))}
+        </div>
+        <label className="field">
+          <span>Папка проекта</span>
+          <input
+            data-testid="project-path"
+            value={projectPath}
+            placeholder="Путь к папке"
+            onChange={(event) => setProjectPath(event.target.value)}
+          />
+        </label>
+        <label className="field">
+          <span>Карта, если уже есть</span>
+          <input
+            data-testid="map-path"
+            value={mapPath}
+            placeholder="Необязательный путь"
+            onChange={(event) => setMapPath(event.target.value)}
+          />
+        </label>
         <label className="field">
           <span>Задача</span>
           <textarea data-testid="task-input" value={task} onChange={(event) => setTask(event.target.value)} />
         </label>
-        <button type="button" className="primary wide" data-testid="start-run" disabled={busy || locked || !task.trim()} onClick={() => void start()}>
+        <button
+          type="button"
+          className="primary wide"
+          data-testid="start-run"
+          disabled={busy || locked || !task.trim() || picked.length === 0}
+          onClick={() => void start()}
+        >
           Запустить
         </button>
         {live ? (
           <p className="now" data-testid="run-status">
             Сейчас: {live.steps[live.stepIndex ?? 0]?.title ?? '—'} · {statusLabel(live.status)}
+          </p>
+        ) : null}
+        {live?.status === 'waiting_user' ? (
+          <div className="decision">
+            <p>Роль задала вопрос. Оркестратор за вас не отвечает, конвейер стоит.</p>
+            <p data-testid="pending-question">{live.pendingQuestion}</p>
+            <label className="field">
+              <span>Ответ</span>
+              <textarea data-testid="user-answer" value={answer} onChange={(event) => setAnswer(event.target.value)} />
+            </label>
+            <button type="button" className="primary" data-testid="send-answer" disabled={busy || !answer.trim()} onClick={() => void sendAnswer()}>
+              Ответить
+            </button>
+          </div>
+        ) : null}
+        {openedStep ? (
+          <section className="dialogue" data-testid="dialogue">
+            <h2>Диалог · {openedStep.title}</h2>
+            {openedStep.messages.length === 0 ? <p className="hint">Реплик пока нет.</p> : null}
+            {openedStep.messages.map((message) => (
+              <p key={message.id} className={`bubble ${message.author}`}>
+                {message.text}
+              </p>
+            ))}
+          </section>
+        ) : null}
+        {shown?.project ? (
+          <p className="hint">
+            Проект: {shown.project.folder ?? 'не задан'}. Правила, навыки и команды берутся из .cursor по путям
+            {shown.project.rules.length + shown.project.skills.length + shown.project.commands.length
+              ? `: ${[...shown.project.rules, ...shown.project.skills, ...shown.project.commands].join(', ')}`
+              : ' и в сообщения не копируются'}
+            .
+            {shown.mapNote ? ` ${shown.mapNote}` : ''}
           </p>
         ) : null}
         {live?.status === 'waiting_approval' ? (
@@ -308,6 +444,7 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
                 onChange={(event) => patchStep(selectedStep.id, { mode: event.target.value as StepMode })}
               >
                 <option value="automatic">Автоматически</option>
+                <option value="question">Ждёт ответа</option>
                 <option value="approval">Ждёт подтверждения</option>
               </select>
             </label>

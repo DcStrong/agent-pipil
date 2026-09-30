@@ -3,7 +3,13 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { createSeedState, parseState, type Run, type State } from '../domain';
+import {
+  createSeedState,
+  ensureSeedRoles,
+  parseState,
+  type Run,
+  type State,
+} from '../domain';
 import { DATA_PATH } from './store.tokens';
 
 @Injectable()
@@ -15,7 +21,8 @@ export class StoreService {
   constructor(@Inject(DATA_PATH) private readonly dataPath: string) {
     const loaded = this.loadFromDisk();
     this.state = loaded.state;
-    if (loaded.wroteSeed || this.failInterruptedRuns()) {
+    const rolesAdded = ensureSeedRoles(this.state);
+    if (loaded.wroteSeed || rolesAdded || this.failInterruptedRuns()) {
       this.enqueueWrite();
     }
   }
@@ -48,7 +55,10 @@ export class StoreService {
 
   hasActiveRun(): boolean {
     return this.state.runs.some(
-      (run) => run.status === 'running' || run.status === 'waiting_approval',
+      (run) =>
+        run.status === 'running' ||
+        run.status === 'waiting_approval' ||
+        run.status === 'waiting_user',
     );
   }
 
@@ -62,7 +72,10 @@ export class StoreService {
 
   relevantRun(): Run | null {
     const active = this.state.runs.find(
-      (run) => run.status === 'running' || run.status === 'waiting_approval',
+      (run) =>
+        run.status === 'running' ||
+        run.status === 'waiting_approval' ||
+        run.status === 'waiting_user',
     );
     const chosen = active ?? this.state.runs[0];
     return chosen ? structuredClone(chosen) : null;
@@ -97,8 +110,13 @@ export class StoreService {
   private failInterruptedRuns(): boolean {
     let changed = false;
     for (const run of this.state.runs) {
-      if (run.status !== 'running' && run.status !== 'waiting_approval')
+      if (
+        run.status !== 'running' &&
+        run.status !== 'waiting_approval' &&
+        run.status !== 'waiting_user'
+      ) {
         continue;
+      }
       run.status = 'failed';
       run.error = 'Сервер перезапустился, пока запуск ещё шёл.';
       run.updatedAt = new Date().toISOString();

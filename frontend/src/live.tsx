@@ -81,7 +81,9 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     }
   }, [reload, upsertRun])
 
-  const active = runs.some((run) => run.status === 'running' || run.status === 'waiting_approval')
+  const active = runs.some(
+    (run) => run.status === 'running' || run.status === 'waiting_approval' || run.status === 'waiting_user',
+  )
 
   useEffect(() => {
     if (!active) return

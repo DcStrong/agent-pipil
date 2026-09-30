@@ -52,13 +52,43 @@ export class RunsController {
     if (typeof body !== 'object' || body === null || Array.isArray(body)) {
       throw new BadRequestException('Ожидался JSON-объект.');
     }
-    const record = body as { workflowId?: unknown; task?: unknown };
+    const record = body as {
+      workflowId?: unknown;
+      task?: unknown;
+      roleIds?: unknown;
+      projectPath?: unknown;
+      mapPath?: unknown;
+    };
     if (typeof record.workflowId !== 'string') {
       throw new BadRequestException('Нужен workflowId.');
     }
     if (typeof record.task !== 'string')
       throw new BadRequestException('Нужна задача.');
-    return this.runs.start(record.workflowId, record.task);
+    const roleIds = record.roleIds;
+    if (roleIds !== undefined && (!Array.isArray(roleIds) || roleIds.some((id) => typeof id !== 'string'))) {
+      throw new BadRequestException('roleIds должен быть списком id ролей.');
+    }
+    if (record.projectPath !== undefined && record.projectPath !== null && typeof record.projectPath !== 'string') {
+      throw new BadRequestException('Папка проекта должна быть строкой.');
+    }
+    if (record.mapPath !== undefined && record.mapPath !== null && typeof record.mapPath !== 'string') {
+      throw new BadRequestException('Путь карты должен быть строкой.');
+    }
+    return this.runs.start(record.workflowId, record.task, {
+      roleIds: roleIds as string[] | undefined,
+      projectPath: typeof record.projectPath === 'string' ? record.projectPath : null,
+      mapPath: typeof record.mapPath === 'string' ? record.mapPath : null,
+    });
+  }
+
+  @Post(':id/answer')
+  answer(@Param('id') id: string, @Body() body: unknown): Run {
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      throw new BadRequestException('Ожидался JSON-объект.');
+    }
+    const text = (body as { text?: unknown }).text;
+    if (typeof text !== 'string') throw new BadRequestException('Нужен текст ответа.');
+    return this.runs.answer(id, text);
   }
 
   @Post(':id/decision')
