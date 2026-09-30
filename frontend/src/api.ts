@@ -11,6 +11,7 @@ import type {
   SkillScope,
   StepMode,
   StreamMessage,
+  TaskPlan,
   Workflow,
   WorkflowStep,
 } from './types'
@@ -84,7 +85,7 @@ export const api = {
   startRun: (
     workflowId: string,
     task: string,
-    options?: { roleIds?: string[]; projectPath?: string; mapPath?: string },
+    options?: { roleIds?: string[]; projectPath?: string; mapPath?: string; deepThinking?: boolean },
   ) =>
     request<Run>('/api/runs', {
       method: 'POST',
@@ -94,7 +95,13 @@ export const api = {
         roleIds: options?.roleIds,
         projectPath: options?.projectPath ?? null,
         mapPath: options?.mapPath ?? null,
+        deepThinking: options?.deepThinking === true,
       }),
+    }),
+  savePlan: (id: string, plan: TaskPlan) =>
+    request<Run>(`/api/runs/${id}/plan`, {
+      method: 'POST',
+      body: JSON.stringify(plan),
     }),
   answer: (id: string, text: string) =>
     request<Run>(`/api/runs/${id}/answer`, {

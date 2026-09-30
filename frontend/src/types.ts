@@ -9,9 +9,15 @@ export type AgentKind =
   | 'reviewer'
   | 'custom'
 export type Harness = 'simulated' | 'cursor'
-export type StepMode = 'automatic' | 'approval' | 'question'
+export type StepMode = 'automatic' | 'approval' | 'question' | 'ask' | 'plan' | 'build' | 'review'
 export type SkillScope = 'shared' | 'agent'
-export type RunStatus = 'running' | 'waiting_approval' | 'waiting_user' | 'completed' | 'failed'
+export type RunStatus =
+  | 'running'
+  | 'waiting_approval'
+  | 'waiting_user'
+  | 'waiting_plan'
+  | 'completed'
+  | 'failed'
 export type ReturnShape = 'object' | 'array' | 'none'
 export type DialogueAuthor = 'role' | 'user' | 'handoff'
 
@@ -35,6 +41,21 @@ export interface HandoffBrief {
   goal: string
   decided: string
   now: string
+}
+
+export interface TaskPlan {
+  why: string
+  changes: string
+  how: string
+  checklist: string
+}
+
+export interface TaskArchive {
+  note: string
+  plan: TaskPlan
+  result: string
+  at: string
+  folder: string | null
 }
 
 export interface DialogueMessage {
@@ -158,6 +179,13 @@ export interface Run {
   pendingQuestion: string | null
   mapWritten: boolean
   mapNote: string | null
+  deepThinking: boolean
+  note: string | null
+  plan: TaskPlan | null
+  buildText: string | null
+  reviewText: string | null
+  taskFolder: string | null
+  archive: TaskArchive | null
 }
 
 export interface CursorConnection {

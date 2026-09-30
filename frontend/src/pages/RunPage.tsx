@@ -1,9 +1,11 @@
 /** Журнал одного запуска и панель сведений. Текст ошибки приходит с сервера. */
 import { useState } from 'react'
 import { api, messageOf } from '../api'
+import { TaskOrderPanel } from '../components/TaskOrderPanel'
 import { clock, duration, eventTag, finalText, harnessLabel, statusLabel, taskTitle } from '../format'
 import { useLive } from '../live'
 import { href } from '../route'
+import type { TaskPlan } from '../types'
 
 export function RunPage({ runId }: { runId: string }) {
   const { ready, runs, upsertRun } = useLive()
@@ -20,6 +22,19 @@ export function RunPage({ runId }: { runId: string }) {
     try {
       upsertRun(await api.answer(run.id, answer))
       setAnswer('')
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function savePlan(plan: TaskPlan) {
+    if (!run) return
+    setBusy(true)
+    setError(null)
+    try {
+      upsertRun(await api.savePlan(run.id, plan))
     } catch (reason) {
       setError(messageOf(reason))
     } finally {
@@ -106,6 +121,7 @@ export function RunPage({ runId }: { runId: string }) {
               ))}
             </section>
           ))}
+        {run.deepThinking ? <TaskOrderPanel run={run} busy={busy} onSave={savePlan} /> : null}
         {run.status === 'waiting_user' ? (
           <div className="decision">
             <p>Роль ждёт ответа. Оркестратор за вас не отвечает.</p>

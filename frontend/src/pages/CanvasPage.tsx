@@ -3,11 +3,12 @@ import { LayoutGroup, motion } from 'motion/react'
 import { useEffect, useState } from 'react'
 import { api, messageOf } from '../api'
 import { DarkSelect } from '../components/DarkSelect'
-import { finalText, statusLabel, taskTitle } from '../format'
+import { TaskOrderPanel } from '../components/TaskOrderPanel'
+import { finalText, isOpenRun, statusLabel, taskTitle } from '../format'
 import { useLive } from '../live'
 import { href } from '../route'
 import { hasCycle, materialize, orderSteps, withHandoffs } from '../step-graph'
-import type { Agent, AgentKind, Run, StepMode, Workflow, WorkflowStep } from '../types'
+import type { Agent, AgentKind, Run, StepMode, TaskPlan, Workflow, WorkflowStep } from '../types'
 
 const TASK_ROLES: AgentKind[] = ['orchestrator', 'analyst', 'architect', 'developer', 'tester']
 
@@ -15,6 +16,10 @@ const MODE_OPTIONS = [
   { value: 'automatic', label: 'Автоматически' },
   { value: 'question', label: 'Ждёт ответа' },
   { value: 'approval', label: 'Ждёт подтверждения' },
+  { value: 'ask', label: 'Смотреть' },
+  { value: 'plan', label: 'План' },
+  { value: 'build', label: 'Сборка' },
+  { value: 'review', label: 'Сверка' },
 ]
 
 export function CanvasPage({ workflowId }: { workflowId: string }) {
@@ -24,6 +29,7 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
   const [draft, setDraft] = useState<Workflow | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [task, setTask] = useState('Нужен массив объектов заказов')
+  const [deepThinking, setDeepThinking] = useState(false)
   const [projectPath, setProjectPath] = useState('')
   const [mapPath, setMapPath] = useState('')
   const [opened, setOpened] = useState<string | null>(null)
@@ -69,11 +75,7 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
     }
   }, [ready, workflow, workflowId, upsertWorkflow])
 
-  const live = runs.find(
-    (run) =>
-      run.workflowId === workflowId &&
-      (run.status === 'running' || run.status === 'waiting_approval' || run.status === 'waiting_user'),
-  )
+  const live = runs.find((run) => run.workflowId === workflowId && isOpenRun(run.status))
   const latest = runs.find((run) => run.workflowId === workflowId)
   const shown = live ?? latest ?? null
   const locked = Boolean(live)
@@ -327,6 +329,7 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
       const run = await api.startRun(workflowId, task, {
         projectPath: projectPath.trim(),
         mapPath: mapPath.trim(),
+        deepThinking,
       })
       upsertRun(run)
       setOpened(run.steps[0]?.stepId ?? null)
@@ -344,6 +347,19 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
     try {
       upsertRun(await api.answer(live.id, answer))
       setAnswer('')
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function savePlan(plan: TaskPlan) {
+    if (!live) return
+    setBusy(true)
+    setError(null)
+    try {
+      upsertRun(await api.savePlan(live.id, plan))
     } catch (reason) {
       setError(messageOf(reason))
     } finally {
@@ -550,6 +566,16 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
           <span>Задача</span>
           <textarea data-testid="task-input" value={task} onChange={(event) => setTask(event.target.value)} />
         </label>
+        <label className="checkline">
+          <input
+            type="checkbox"
+            data-testid="deep-thinking"
+            checked={deepThinking}
+            disabled={locked}
+            onChange={(event) => setDeepThinking(event.target.checked)}
+          />
+          Глубокое мышление
+        </label>
         <button
           type="button"
           className="primary wide"
@@ -563,6 +589,9 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
           <p className="now" data-testid="run-status">
             Сейчас: {live.steps[live.stepIndex ?? 0]?.title ?? '—'} · {statusLabel(live.status)}
           </p>
+        ) : null}
+        {shown?.deepThinking ? (
+          <TaskOrderPanel run={live ?? shown} busy={busy} onSave={savePlan} />
         ) : null}
         {live?.status === 'waiting_user' ? (
           <div className="decision">
@@ -762,8 +791,7 @@ function Branch({
         data-testid={active ? 'active-step' : `step-${step.id}`}
       >
         <span className="node-title">{step.title}</span>
-        {step.mode === 'approval' ? <span className="mode-chip">проверка</span> : null}
-        {step.mode === 'question' ? <span className="mode-chip">вопрос</span> : null}
+        {modeChip(step.mode) ? <span className="mode-chip">{modeChip(step.mode)}</span> : null}
       </button>
       {active && live ? (
         <motion.span layoutId="live-badge" className={live.status === 'running' ? 'badge' : 'badge wait'}>
@@ -771,7 +799,9 @@ function Branch({
             ? 'Ждёт подтверждения'
             : live.status === 'waiting_user'
               ? 'Ждёт ответа'
-              : 'Выполняется'}
+              : live.status === 'waiting_plan'
+                ? 'Можно править план'
+                : 'Выполняется'}
         </motion.span>
       ) : null}
       {children.length > 0 ? (
@@ -794,6 +824,16 @@ function Branch({
       ) : null}
     </div>
   )
+}
+
+function modeChip(mode: StepMode): string | null {
+  if (mode === 'approval') return 'проверка'
+  if (mode === 'question') return 'вопрос'
+  if (mode === 'ask') return 'смотреть'
+  if (mode === 'plan') return 'план'
+  if (mode === 'build') return 'сборка'
+  if (mode === 'review') return 'сверка'
+  return null
 }
 
 function agentRank(kind: AgentKind): number {

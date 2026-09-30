@@ -11,10 +11,16 @@ export type AgentKind =
   | 'reviewer'
   | 'custom';
 export type Harness = 'simulated' | 'cursor';
-export type StepMode = 'automatic' | 'approval' | 'question';
+export type StepMode =
+  'automatic' | 'approval' | 'question' | 'ask' | 'plan' | 'build' | 'review';
 export type SkillScope = 'shared' | 'agent';
 export type RunStatus =
-  'running' | 'waiting_approval' | 'waiting_user' | 'completed' | 'failed';
+  | 'running'
+  | 'waiting_approval'
+  | 'waiting_user'
+  | 'waiting_plan'
+  | 'completed'
+  | 'failed';
 export type RunEventKind =
   'progress' | 'handoff' | 'approval' | 'question' | 'error' | 'done';
 export type ReturnShape = 'object' | 'array' | 'none';
@@ -84,6 +90,23 @@ export interface HandoffBrief {
   goal: string;
   decided: string;
   now: string;
+}
+
+/** Четыре короткие части плана. Их можно поправить до сборки. */
+export interface TaskPlan {
+  why: string;
+  changes: string;
+  how: string;
+  checklist: string;
+}
+
+/** План и результат уходят в архив этой задачи, а не в следующий диалог. */
+export interface TaskArchive {
+  note: string;
+  plan: TaskPlan;
+  result: string;
+  at: string;
+  folder: string | null;
 }
 
 export interface DialogueMessage {
@@ -168,6 +191,17 @@ export interface Run {
   pendingQuestion: string | null;
   mapWritten: boolean;
   mapNote: string | null;
+  /** Галка на задаче. Выключена — агенты берут задачу сразу. */
+  deepThinking: boolean;
+  /** Короткая заметка, что уже есть. Пустая, если галка выключена. */
+  note: string | null;
+  plan: TaskPlan | null;
+  /** Текст сборки. Контекст — план, если план есть. */
+  buildText: string | null;
+  reviewText: string | null;
+  /** Папка задачи в проекте. Без папки проекта части лежат на самой задаче. */
+  taskFolder: string | null;
+  archive: TaskArchive | null;
 }
 
 export interface State {
@@ -652,7 +686,15 @@ function harness(value: unknown): Harness {
 }
 
 function stepMode(value: unknown): StepMode {
-  if (value === 'automatic' || value === 'approval' || value === 'question') {
+  if (
+    value === 'automatic' ||
+    value === 'approval' ||
+    value === 'question' ||
+    value === 'ask' ||
+    value === 'plan' ||
+    value === 'build' ||
+    value === 'review'
+  ) {
     return value;
   }
   return fail('режим шага');
@@ -808,6 +850,33 @@ function parseShape(value: unknown): ReturnShape {
   return 'none';
 }
 
+function parsePlan(value: unknown): TaskPlan | null {
+  if (value == null) return null;
+  if (!isRecord(value)) fail('план задачи');
+  return {
+    why: text(value.why, 'зачем'),
+    changes: text(value.changes, 'изменения'),
+    how: text(value.how, 'как'),
+    checklist: text(value.checklist, 'чеклист'),
+  };
+}
+
+function parseArchive(value: unknown): TaskArchive | null {
+  if (value == null) return null;
+  if (!isRecord(value)) fail('архив задачи');
+  const plan = parsePlan(value.plan);
+  if (!plan) fail('план архива');
+  const folder = value.folder;
+  if (folder !== null && typeof folder !== 'string') fail('папка архива');
+  return {
+    note: text(value.note, 'заметка архива'),
+    plan,
+    result: text(value.result, 'итог архива'),
+    at: text(value.at, 'время архива'),
+    folder,
+  };
+}
+
 function parseRunStep(value: unknown): RunStep {
   if (!isRecord(value) || !Array.isArray(value.skills)) fail('шаг запуска');
   const stepId = text(value.stepId, 'id шага запуска');
@@ -890,6 +959,7 @@ function parseRun(value: unknown): Run {
     status !== 'running' &&
     status !== 'waiting_approval' &&
     status !== 'waiting_user' &&
+    status !== 'waiting_plan' &&
     status !== 'completed' &&
     status !== 'failed'
   ) {
@@ -925,6 +995,13 @@ function parseRun(value: unknown): Run {
       typeof value.pendingQuestion === 'string' ? value.pendingQuestion : null,
     mapWritten: value.mapWritten === true,
     mapNote: typeof value.mapNote === 'string' ? value.mapNote : null,
+    deepThinking: value.deepThinking === true,
+    note: typeof value.note === 'string' ? value.note : null,
+    plan: value.plan === undefined ? null : parsePlan(value.plan),
+    buildText: typeof value.buildText === 'string' ? value.buildText : null,
+    reviewText: typeof value.reviewText === 'string' ? value.reviewText : null,
+    taskFolder: typeof value.taskFolder === 'string' ? value.taskFolder : null,
+    archive: value.archive === undefined ? null : parseArchive(value.archive),
   };
 }
 

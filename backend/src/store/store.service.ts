@@ -65,7 +65,8 @@ export class StoreService {
       (run) =>
         run.status === 'running' ||
         run.status === 'waiting_approval' ||
-        run.status === 'waiting_user',
+        run.status === 'waiting_user' ||
+        run.status === 'waiting_plan',
     );
   }
 
@@ -82,7 +83,8 @@ export class StoreService {
       (run) =>
         run.status === 'running' ||
         run.status === 'waiting_approval' ||
-        run.status === 'waiting_user',
+        run.status === 'waiting_user' ||
+        run.status === 'waiting_plan',
     );
     const chosen = active ?? this.state.runs[0];
     return chosen ? structuredClone(chosen) : null;
@@ -120,7 +122,8 @@ export class StoreService {
       if (
         run.status !== 'running' &&
         run.status !== 'waiting_approval' &&
-        run.status !== 'waiting_user'
+        run.status !== 'waiting_user' &&
+        run.status !== 'waiting_plan'
       ) {
         continue;
       }

@@ -6,7 +6,8 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { Observable, Subject } from 'rxjs';
-import type { AgentKind, Run, RunStep, StepMode } from '../domain';
+import type { AgentKind, Run, RunStep, StepMode, TaskPlan } from '../domain';
+import { checklistItems } from '../runtime/task-order';
 import { roleOrder } from '../domain';
 import { orderSteps } from '../runtime/step-graph';
 import { CursorClient } from '../runtime/cursor-client';
@@ -54,7 +55,12 @@ export class RunsService {
   start(
     workflowId: string,
     task: string,
-    options?: { roleIds?: string[]; projectPath?: string | null; mapPath?: string | null },
+    options?: {
+      roleIds?: string[];
+      projectPath?: string | null;
+      mapPath?: string | null;
+      deepThinking?: boolean;
+    },
   ): Run {
     const trimmed = task.trim();
     if (!trimmed) throw new BadRequestException('Сначала напишите задачу.');
@@ -93,11 +99,21 @@ export class RunsService {
       createdAt: now,
       updatedAt: now,
       finishedAt: null,
-      project: inspectProject(options?.projectPath ?? null, options?.mapPath ?? null),
+      project: inspectProject(
+        options?.projectPath ?? null,
+        options?.mapPath ?? null,
+      ),
       developerShape: 'none',
       pendingQuestion: null,
       mapWritten: false,
       mapNote: null,
+      deepThinking: options?.deepThinking === true,
+      note: null,
+      plan: null,
+      buildText: null,
+      reviewText: null,
+      taskFolder: null,
+      archive: null,
     };
     this.store.upsertRun(run);
     const cursorConnected = this.settings.hasToken();
@@ -127,6 +143,36 @@ export class RunsService {
     return this.get(id);
   }
 
+  /** Кладёт поправленный план и отпускает сборку. */
+  savePlan(
+    id: string,
+    raw: {
+      why: unknown;
+      changes: unknown;
+      how: unknown;
+      checklist: unknown;
+    },
+  ): Run {
+    const current = this.get(id);
+    if (current.status !== 'waiting_plan') {
+      throw new BadRequestException('Этот запуск не ждёт правки плана.');
+    }
+    const plan: TaskPlan = {
+      why: this.planField(raw.why, 'Зачем'),
+      changes: this.planField(raw.changes, 'Что меняется'),
+      how: this.planField(raw.how, 'Как'),
+      checklist: this.planField(raw.checklist, 'Чеклист'),
+    };
+    if (checklistItems(plan.checklist).length === 0) {
+      throw new BadRequestException('В чеклисте нужна хотя бы одна строка.');
+    }
+    const accepted = this.orchestrator.revise(id, plan);
+    if (!accepted) {
+      throw new BadRequestException('План уже некому передать.');
+    }
+    return this.get(id);
+  }
+
   /** Ответ владельца уходит только в диалог роли, которая спросила. */
   answer(id: string, text: string): Run {
     const current = this.get(id);
@@ -145,16 +191,37 @@ export class RunsService {
     return this.get(id);
   }
 
+  private planField(value: unknown, label: string): string {
+    if (typeof value !== 'string') {
+      throw new BadRequestException(`${label} нужно написать текстом.`);
+    }
+    const trimmed = value.trim();
+    if (!trimmed)
+      throw new BadRequestException(`${label} не может быть пустым.`);
+    if (trimmed.length > 2000) {
+      throw new BadRequestException(`${label} короче 2000 символов.`);
+    }
+    return trimmed;
+  }
+
   private freshStep(
     stepId: string,
-    agent: { id: string; name: string; kind: AgentKind; instructions: string; harness: RunStep['harness'] },
+    agent: {
+      id: string;
+      name: string;
+      kind: AgentKind;
+      instructions: string;
+      harness: RunStep['harness'];
+    },
     title: string,
     mode: StepMode,
     handoff: string,
   ): RunStep {
     const state = this.store.read();
     const shared = state.skills.filter((skill) => skill.scope === 'shared');
-    const own = state.skills.filter((skill) => skill.scope === 'agent' && skill.agentId === agent.id);
+    const own = state.skills.filter(
+      (skill) => skill.scope === 'agent' && skill.agentId === agent.id,
+    );
     return {
       stepId,
       agentId: agent.id,
@@ -187,7 +254,8 @@ export class RunsService {
     const agents = this.store.read().agents;
     const chosen = unique.map((id) => {
       const agent = agents.find((item) => item.id === id);
-      if (!agent) throw new BadRequestException('Среди ролей есть неизвестная.');
+      if (!agent)
+        throw new BadRequestException('Среди ролей есть неизвестная.');
       return agent;
     });
     chosen.sort((left, right) => roleOrder(left.kind) - roleOrder(right.kind));
@@ -213,7 +281,13 @@ export class RunsService {
       const agent = state.agents.find((item) => item.id === step.agentId);
       if (!agent)
         throw new BadRequestException('Шаг ссылается на удалённого агента.');
-      return this.freshStep(step.id, agent, step.title, step.mode, step.handoff);
+      return this.freshStep(
+        step.id,
+        agent,
+        step.title,
+        step.mode,
+        step.handoff,
+      );
     });
   }
 }

@@ -117,10 +117,14 @@ export class WorkflowsService {
       if (
         step.mode !== 'automatic' &&
         step.mode !== 'approval' &&
-        step.mode !== 'question'
+        step.mode !== 'question' &&
+        step.mode !== 'ask' &&
+        step.mode !== 'plan' &&
+        step.mode !== 'build' &&
+        step.mode !== 'review'
       ) {
         throw new BadRequestException(
-          'Режим шага: automatic, approval или question.',
+          'Режим шага: automatic, approval, question, ask, plan, build или review.',
         );
       }
       if (typeof step.handoff !== 'string') {
@@ -156,7 +160,10 @@ export class WorkflowsService {
     }
     const outgoing = resolvedNext(nextSteps);
     for (const step of nextSteps) {
-      if ((outgoing.get(step.id) ?? []).length > 0 && step.handoff.length === 0) {
+      if (
+        (outgoing.get(step.id) ?? []).length > 0 &&
+        step.handoff.length === 0
+      ) {
         throw new BadRequestException(
           'Напишите передачу для каждого шага, у которого есть следующий.',
         );
