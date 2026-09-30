@@ -1,6 +1,7 @@
 /** Окно создания процесса: статусы агентов, затем публикация на сервере. */
 import { useEffect, useRef, useState } from 'react'
 import { api, messageOf } from '../api'
+import { useLive } from '../live'
 import { href } from '../route'
 import { IconClose } from './Icons'
 
@@ -26,11 +27,15 @@ export function SetupModal({
   initialName: string
   onClose: () => void
 }) {
+  const { upsertWorkflow } = useLive()
   const [name, setName] = useState(initialName)
   const [frame, setFrame] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const nameRef = useRef(initialName)
   const closeRef = useRef(onClose)
+  const upsertRef = useRef(upsertWorkflow)
+  /** Один показ окна публикует процесс один раз, даже если таймер сработает повторно. */
+  const published = useRef(false)
 
   useEffect(() => {
     nameRef.current = name
@@ -41,24 +46,35 @@ export function SetupModal({
   }, [onClose])
 
   useEffect(() => {
+    upsertRef.current = upsertWorkflow
+  }, [upsertWorkflow])
+
+  useEffect(() => {
     let cancel = false
     let step = 0
     const timer = window.setInterval(() => {
       step += 1
       if (cancel) return
-      if (step < frames.length) {
+      if (step < frames.length - 1) {
         setFrame(step)
         return
       }
       window.clearInterval(timer)
+      if (published.current) return
+      published.current = true
+      setFrame(frames.length - 2)
       void api
         .createWorkflow(nameRef.current.trim() || 'Новый процесс')
         .then((workflow) => {
+          // Сначала список, потом адрес. Иначе холст открывается раньше, чем процесс в нём появляется.
+          upsertRef.current(workflow)
           if (cancel) return
+          setFrame(frames.length - 1)
           window.location.hash = href({ name: 'canvas', workflowId: workflow.id })
           closeRef.current()
         })
         .catch((reason: unknown) => {
+          published.current = false
           if (!cancel) setError(messageOf(reason))
         })
     }, 700)

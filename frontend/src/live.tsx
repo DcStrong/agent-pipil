@@ -21,6 +21,8 @@ interface LiveValue {
   cursor: CursorConnection | null
   reload: () => Promise<void>
   upsertRun: (run: Run) => void
+  /** Кладёт процесс в уже открытый список, без повторной загрузки всей страницы. */
+  upsertWorkflow: (workflow: Workflow) => void
 }
 
 const LiveContext = createContext<LiveValue | null>(null)
@@ -55,6 +57,16 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     setRuns((list) => mergeRun(list, run))
   }, [])
 
+  const upsertWorkflow = useCallback((workflow: Workflow) => {
+    setWorkflows((list) => {
+      const index = list.findIndex((item) => item.id === workflow.id)
+      if (index === -1) return [...list, workflow]
+      const next = list.slice()
+      next[index] = workflow
+      return next
+    })
+  }, [])
+
   useEffect(() => {
     let cancel = false
     void reload().catch((reason: unknown) => {
@@ -85,8 +97,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   }, [active])
 
   const value = useMemo<LiveValue>(
-    () => ({ ready, error, agents, skills, workflows, runs, cursor, reload, upsertRun }),
-    [ready, error, agents, skills, workflows, runs, cursor, reload, upsertRun],
+    () => ({ ready, error, agents, skills, workflows, runs, cursor, reload, upsertRun, upsertWorkflow }),
+    [ready, error, agents, skills, workflows, runs, cursor, reload, upsertRun, upsertWorkflow],
   )
 
   return <LiveContext.Provider value={value}>{children}</LiveContext.Provider>

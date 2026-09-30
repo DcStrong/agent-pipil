@@ -8,13 +8,14 @@ import { href } from '../route'
 import type { StepMode, Workflow, WorkflowStep } from '../types'
 
 export function CanvasPage({ workflowId }: { workflowId: string }) {
-  const { ready, workflows, agents, runs, reload, upsertRun } = useLive()
+  const { ready, workflows, agents, runs, reload, upsertRun, upsertWorkflow } = useLive()
   const workflow = workflows.find((item) => item.id === workflowId)
   const [draft, setDraft] = useState<Workflow | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [task, setTask] = useState('Добавить экспорт в webp')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [missedId, setMissedId] = useState<string | null>(null)
 
   const signature = workflow
     ? JSON.stringify({
@@ -31,6 +32,23 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
     setSelected((current) => current ?? workflow.steps[0]?.id ?? null)
   }, [signature])
 
+  // Список мог ещё не содержать только что созданный процесс. Берём его с сервера, не показывая «не найден».
+  useEffect(() => {
+    if (!ready || workflow) return
+    let cancel = false
+    void api
+      .workflow(workflowId)
+      .then((item) => {
+        if (!cancel) upsertWorkflow(item)
+      })
+      .catch(() => {
+        if (!cancel) setMissedId(workflowId)
+      })
+    return () => {
+      cancel = true
+    }
+  }, [ready, workflow, workflowId, upsertWorkflow])
+
   const live = runs.find(
     (run) => run.workflowId === workflowId && (run.status === 'running' || run.status === 'waiting_approval'),
   )
@@ -38,7 +56,9 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
   const shown = live ?? latest ?? null
   const locked = Boolean(live)
 
-  if (!ready || (workflow && !draft)) {
+  const missing = missedId === workflowId && !workflow
+
+  if (!ready || (!missing && (!workflow || !draft))) {
     return (
       <div className="page">
         <p className="muted">Загрузка…</p>
