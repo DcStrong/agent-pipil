@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { SettingsService } from '../settings/settings.service';
 import { StoreService } from '../store/store.service';
 import { DATA_PATH } from '../store/store.tokens';
+import { WorkflowsService } from '../workflows/workflows.service';
 import { RunsService } from './runs.service';
 
 async function settle(): Promise<void> {
@@ -48,11 +49,13 @@ describe('RunsService', () => {
   async function make(): Promise<{
     runs: RunsService;
     settings: SettingsService;
+    workflows: WorkflowsService;
   }> {
     directory = await mkdtemp(join(tmpdir(), 'pipil-'));
     moduleRef = await Test.createTestingModule({
       providers: [
         RunsService,
+        WorkflowsService,
         SettingsService,
         StoreService,
         { provide: DATA_PATH, useValue: join(directory, 'state.json') },
@@ -61,6 +64,7 @@ describe('RunsService', () => {
     return {
       runs: moduleRef.get(RunsService),
       settings: moduleRef.get(SettingsService),
+      workflows: moduleRef.get(WorkflowsService),
     };
   }
 
@@ -236,5 +240,30 @@ describe('RunsService', () => {
     expect(done.steps.filter((step) => step.kind !== 'orchestrator').every((step) =>
       step.messages.every((item) => !item.text.includes('записал её в конце')),
     )).toBe(true);
+  });
+
+  it('идёт по дереву и повторяет роль', async () => {
+    const { runs, workflows } = await make();
+    workflows.replace('workflow_supervised', 'Сборка с проверкой', 'Дерево', [
+      { id: 'n1', agentId: 'role_orchestrator', title: 'Оркестратор', mode: 'automatic', handoff: 'дальше', nextIds: ['n2'] },
+      { id: 'n2', agentId: 'role_analyst', title: 'Аналитик', mode: 'automatic', handoff: 'дальше', nextIds: ['n3'] },
+      { id: 'n3', agentId: 'role_architect', title: 'Архитектор', mode: 'automatic', handoff: 'дальше', nextIds: ['n4'] },
+      { id: 'n4', agentId: 'role_analyst', title: 'Аналитик ещё', mode: 'automatic', handoff: 'дальше', nextIds: ['n5'] },
+      { id: 'n5', agentId: 'role_developer', title: 'Бэкенд', mode: 'automatic', handoff: 'дальше', nextIds: ['n6', 'n7'] },
+      { id: 'n6', agentId: 'agent_reviewer', title: 'Проверка', mode: 'automatic', handoff: 'дальше', nextIds: [] },
+      { id: 'n7', agentId: 'role_tester', title: 'Ветка', mode: 'automatic', handoff: '', nextIds: [] },
+    ]);
+    const started = runs.start('workflow_supervised', 'Короткий обход дерева');
+    const done = await until(runs, started.id, 'completed');
+    expect(done.status).toBe('completed');
+    expect(done.work.map((item) => item.title)).toEqual([
+      'Оркестратор',
+      'Аналитик',
+      'Архитектор',
+      'Аналитик ещё',
+      'Бэкенд',
+      'Проверка',
+      'Ветка',
+    ]);
   });
 });

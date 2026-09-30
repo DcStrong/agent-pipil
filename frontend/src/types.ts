@@ -65,6 +65,7 @@ export interface WorkflowStep {
   title: string
   mode: StepMode
   handoff: string
+  nextIds: string[]
 }
 
 export interface Workflow {

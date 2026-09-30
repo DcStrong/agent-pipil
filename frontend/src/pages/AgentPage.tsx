@@ -1,14 +1,16 @@
 /** Карточка агента: статус, среда, навыки и инструкции. */
 import { useEffect, useState, type FormEvent } from 'react'
 import { api, messageOf } from '../api'
+import { DarkSelect } from '../components/DarkSelect'
 import { IconAgent, IconPlus } from '../components/Icons'
 import { agentOnline, harnessLabel } from '../format'
 import { useLive } from '../live'
 import { href } from '../route'
-import type { AgentKind, Harness, SkillScope } from '../types'
+import { materialize, orderSteps, withHandoffs } from '../step-graph'
+import type { AgentKind, Harness, SkillScope, Workflow, WorkflowStep } from '../types'
 
 export function AgentPage({ agentId }: { agentId: string }) {
-  const { ready, agents, skills, cursor, reload } = useLive()
+  const { ready, agents, skills, workflows, cursor, reload } = useLive()
   const agent = agents.find((item) => item.id === agentId)
   const connected = cursor?.connected ?? false
   const [name, setName] = useState('')
@@ -87,6 +89,39 @@ export function AgentPage({ agentId }: { agentId: string }) {
     try {
       await api.deleteSkill(id)
       await reload()
+    } catch (reason) {
+      setError(messageOf(reason))
+    }
+  }
+
+  async function place(workflow: Workflow) {
+    if (!agent) return
+    setError(null)
+    try {
+      const steps = materialize(workflow.steps)
+      const id = crypto.randomUUID()
+      const created: WorkflowStep = {
+        id,
+        agentId: agent.id,
+        title: agent.name,
+        mode: agent.kind === 'architect' ? 'question' : agent.kind === 'reviewer' ? 'approval' : 'automatic',
+        handoff: '',
+        nextIds: [],
+      }
+      const tail = orderSteps(steps).at(-1)
+      const next = tail
+        ? withHandoffs([
+            ...steps.map((step) => (step.id === tail.id ? { ...step, nextIds: [...step.nextIds, id] } : step)),
+            created,
+          ])
+        : [created]
+      await api.saveWorkflow(workflow.id, {
+        name: workflow.name,
+        description: workflow.description,
+        steps: next,
+      })
+      await reload()
+      window.location.hash = href({ name: 'canvas', workflowId: workflow.id })
     } catch (reason) {
       setError(messageOf(reason))
     }
@@ -183,17 +218,42 @@ export function AgentPage({ agentId }: { agentId: string }) {
             <span>Инструкции навыка</span>
             <textarea value={skillText} onChange={(event) => setSkillText(event.target.value)} />
           </label>
-          <label className="field">
+          <div className="field">
             <span>Область</span>
-            <select value={scope} onChange={(event) => setScope(event.target.value as SkillScope)}>
-              <option value="agent">Только этот агент</option>
-              <option value="shared">Общий</option>
-            </select>
-          </label>
+            <DarkSelect
+              testId="skill-scope"
+              value={scope}
+              options={[
+                { value: 'agent', label: 'Только этот агент' },
+                { value: 'shared', label: 'Общий' },
+              ]}
+              onChange={(value) => setScope(value as SkillScope)}
+            />
+          </div>
           <button type="submit" className="primary">
             <IconPlus /> Добавить
           </button>
         </form>
+      </section>
+      <section className="card">
+        <header className="card-head">
+          <span>На холсте</span>
+        </header>
+        <p className="hint">Поставьте агента следом за последним шагом процесса. На холсте его можно связать с соседями или ответвить.</p>
+        {workflows.length === 0 ? <p className="empty">Сначала создайте процесс.</p> : null}
+        <ul className="cap-list">
+          {workflows.map((workflow) => (
+            <li key={workflow.id}>
+              <div>
+                <strong>{workflow.name}</strong>
+                <p>{workflow.steps.length} шагов</p>
+              </div>
+              <button type="button" data-testid={`place-${workflow.id}`} onClick={() => void place(workflow)}>
+                Поставить следом
+              </button>
+            </li>
+          ))}
+        </ul>
       </section>
       <form className="card form-card" onSubmit={(event) => void save(event)}>
         <h2>Инструкции</h2>
@@ -203,24 +263,32 @@ export function AgentPage({ agentId }: { agentId: string }) {
           <input value={name} onChange={(event) => setName(event.target.value)} />
         </label>
         <div className="split">
-          <label className="field">
+          <div className="field">
             <span>Тип</span>
-            <select value={kind} onChange={(event) => setKind(event.target.value as AgentKind)}>
-              <option value="orchestrator">Оркестратор</option>
-              <option value="analyst">Аналитик</option>
-              <option value="architect">Архитектор</option>
-              <option value="developer">Бэкенд-разработчик</option>
-              <option value="tester">Тестировщик</option>
-              <option value="custom">Свой</option>
-            </select>
-          </label>
-          <label className="field">
+            <DarkSelect
+              value={kind}
+              options={[
+                { value: 'orchestrator', label: 'Оркестратор' },
+                { value: 'analyst', label: 'Аналитик' },
+                { value: 'architect', label: 'Архитектор' },
+                { value: 'developer', label: 'Бэкенд-разработчик' },
+                { value: 'tester', label: 'Тестировщик' },
+                { value: 'custom', label: 'Свой' },
+              ]}
+              onChange={(value) => setKind(value as AgentKind)}
+            />
+          </div>
+          <div className="field">
             <span>Среда</span>
-            <select value={harness} onChange={(event) => setHarness(event.target.value as Harness)}>
-              <option value="simulated">Имитация</option>
-              <option value="cursor">Cursor</option>
-            </select>
-          </label>
+            <DarkSelect
+              value={harness}
+              options={[
+                { value: 'simulated', label: 'Имитация' },
+                { value: 'cursor', label: 'Cursor' },
+              ]}
+              onChange={(value) => setHarness(value as Harness)}
+            />
+          </div>
         </div>
         <label className="field">
           <span>Текст</span>

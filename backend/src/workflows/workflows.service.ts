@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { StepMode, Workflow, WorkflowStep } from '../domain';
+import { hasCycle, resolvedNext } from '../runtime/step-graph';
 import { StoreService } from '../store/store.service';
 
 export interface StepInput {
@@ -13,6 +14,7 @@ export interface StepInput {
   title: string;
   mode: StepMode;
   handoff: string;
+  nextIds?: string[];
 }
 
 @Injectable()
@@ -57,6 +59,7 @@ export class WorkflowsService {
           title: 'План',
           mode: 'automatic',
           handoff: 'Передай проблему и критерии готовности.',
+          nextIds: [],
         },
         {
           id: randomUUID(),
@@ -64,6 +67,7 @@ export class WorkflowsService {
           title: 'Сборка',
           mode: 'automatic',
           handoff: 'Передай изменения и способ проверки.',
+          nextIds: [],
         },
         {
           id: randomUUID(),
@@ -71,6 +75,7 @@ export class WorkflowsService {
           title: 'Проверка',
           mode: 'approval',
           handoff: '',
+          nextIds: [],
         },
       ],
     };
@@ -96,7 +101,7 @@ export class WorkflowsService {
     }
     const agents = this.store.read().agents;
     const used = new Set<string>();
-    const nextSteps: WorkflowStep[] = steps.map((step, index) => {
+    const nextSteps: WorkflowStep[] = steps.map((step) => {
       if (
         !step ||
         typeof step.agentId !== 'string' ||
@@ -124,23 +129,39 @@ export class WorkflowsService {
         );
       }
       const handoff = step.handoff.trim();
-      const isLast = index === steps.length - 1;
-      if (!isLast && handoff.length === 0) {
-        throw new BadRequestException(
-          'Напишите передачу для каждого шага, кроме последнего.',
-        );
-      }
       let stepId = typeof step.id === 'string' ? step.id.trim() : '';
       if (!stepId || used.has(stepId)) stepId = randomUUID();
       used.add(stepId);
+      const nextIds = Array.isArray(step.nextIds)
+        ? step.nextIds.filter((id): id is string => typeof id === 'string')
+        : [];
       return {
         id: stepId,
         agentId: step.agentId,
         title: step.title.trim(),
         mode: step.mode,
         handoff,
+        nextIds,
       };
     });
+    const known = new Set(nextSteps.map((step) => step.id));
+    for (const step of nextSteps) {
+      step.nextIds = [...new Set(step.nextIds.filter((id) => id !== step.id))];
+      if (step.nextIds.some((id) => !known.has(id))) {
+        throw new BadRequestException('Связь ведёт на неизвестный шаг.');
+      }
+    }
+    if (hasCycle(nextSteps)) {
+      throw new BadRequestException('Связь замыкает конвейер.');
+    }
+    const outgoing = resolvedNext(nextSteps);
+    for (const step of nextSteps) {
+      if ((outgoing.get(step.id) ?? []).length > 0 && step.handoff.length === 0) {
+        throw new BadRequestException(
+          'Напишите передачу для каждого шага, у которого есть следующий.',
+        );
+      }
+    }
     const workflow: Workflow = {
       id,
       name: trimmed,

@@ -51,6 +51,8 @@ export interface WorkflowStep {
   title: string;
   mode: StepMode;
   handoff: string;
+  /** Куда ведёт шаг. Пустой список у всех шагов значит прежнюю цепочку по порядку. */
+  nextIds: string[];
 }
 
 export interface Workflow {
@@ -382,6 +384,7 @@ export function createSeedState(): State {
             mode: 'automatic',
             handoff:
               'Передай проблему, допущения и критерии готовности. Способ реализации не выбирай.',
+            nextIds: [],
           },
           {
             id: 'step_build',
@@ -390,6 +393,7 @@ export function createSeedState(): State {
             mode: 'automatic',
             handoff:
               'Передай, что меняется, где риск и как проверить результат.',
+            nextIds: [],
           },
           {
             id: 'step_review',
@@ -397,6 +401,7 @@ export function createSeedState(): State {
             title: 'Проверка',
             mode: 'approval',
             handoff: '',
+            nextIds: [],
           },
         ],
       },
@@ -502,6 +507,9 @@ function parseStep(value: unknown): WorkflowStep {
     title: text(value.title, 'название шага'),
     mode: stepMode(value.mode),
     handoff: text(value.handoff, 'передача'),
+    nextIds: Array.isArray(value.nextIds)
+      ? value.nextIds.filter((id): id is string => typeof id === 'string')
+      : [],
   };
 }
 

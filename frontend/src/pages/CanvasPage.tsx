@@ -1,13 +1,21 @@
-/** Вертикальный холст: задача подсвечивает текущий шаг и может ждать подтверждения. */
+/** Холст процесса: шаги образуют дерево, один агент может стоять несколько раз. */
 import { LayoutGroup, motion } from 'motion/react'
 import { useEffect, useState } from 'react'
 import { api, messageOf } from '../api'
+import { DarkSelect } from '../components/DarkSelect'
 import { finalText, statusLabel, taskTitle } from '../format'
 import { useLive } from '../live'
 import { href } from '../route'
-import type { AgentKind, StepMode, Workflow, WorkflowStep } from '../types'
+import { hasCycle, materialize, orderSteps, withHandoffs } from '../step-graph'
+import type { Agent, AgentKind, Run, StepMode, Workflow, WorkflowStep } from '../types'
 
 const TASK_ROLES: AgentKind[] = ['orchestrator', 'analyst', 'architect', 'developer', 'tester']
+
+const MODE_OPTIONS = [
+  { value: 'automatic', label: 'Автоматически' },
+  { value: 'question', label: 'Ждёт ответа' },
+  { value: 'approval', label: 'Ждёт подтверждения' },
+]
 
 export function CanvasPage({ workflowId }: { workflowId: string }) {
   const { ready, workflows, agents, runs, reload, upsertRun, upsertWorkflow } = useLive()
@@ -17,10 +25,10 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
   const [task, setTask] = useState('Нужен массив объектов заказов')
   const [projectPath, setProjectPath] = useState('')
   const [mapPath, setMapPath] = useState('')
-  const [picked, setPicked] = useState<string[]>([])
-  const [rolesReady, setRolesReady] = useState(false)
   const [opened, setOpened] = useState<string | null>(null)
   const [answer, setAnswer] = useState('')
+  const [linking, setLinking] = useState(false)
+  const [placeAgentId, setPlaceAgentId] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [missedId, setMissedId] = useState<string | null>(null)
@@ -57,14 +65,6 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
     }
   }, [ready, workflow, workflowId, upsertWorkflow])
 
-  useEffect(() => {
-    if (rolesReady) return
-    const defaults = agents.filter((agent) => TASK_ROLES.includes(agent.kind) && agent.kind !== 'tester')
-    if (defaults.length === 0) return
-    setPicked(defaults.map((agent) => agent.id))
-    setRolesReady(true)
-  }, [agents, rolesReady])
-
   const live = runs.find(
     (run) =>
       run.workflowId === workflowId &&
@@ -94,54 +94,137 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
   }
 
   const steps = draft.steps
-  const selectedStep = steps.find((step) => step.id === selected) ?? steps[0]
-  const roleAgents = agents
-    .filter((agent) => TASK_ROLES.includes(agent.kind))
-    .sort((left, right) => TASK_ROLES.indexOf(left.kind) - TASK_ROLES.indexOf(right.kind))
-  const roleRun = Boolean(shown?.steps.some((step) => TASK_ROLES.includes(step.kind)))
-  const flowSource = live || roleRun ? shown : null
-  const flow = flowSource
-    ? flowSource.steps.map((step) => ({ id: step.stepId, title: step.title, mode: step.mode }))
-    : roleAgents
-        .filter((agent) => picked.includes(agent.id))
-        .map((agent) => ({
-          id: agent.id,
-          title: agent.name,
-          mode: (agent.kind === 'architect' ? 'question' : 'automatic') as StepMode,
-        }))
-  const openedStep = flowSource?.steps.find((step) => step.stepId === opened) ?? null
+  const graph = materialize(steps)
+  const byId = new Map(graph.map((step) => [step.id, step]))
+  const selectedStep = graph.find((step) => step.id === selected) ?? graph[0]
+  const palette = [...agents].sort((left, right) => agentRank(left.kind) - agentRank(right.kind) || left.name.localeCompare(right.name, 'ru'))
+  const placeAgent = palette.find((agent) => agent.id === (placeAgentId || palette[0]?.id)) ?? palette[0]
+  const openedStep = shown?.steps.find((step) => step.stepId === opened) ?? null
+  const incoming = new Set<string>()
+  for (const step of graph) {
+    for (const id of step.nextIds) incoming.add(id)
+  }
+  const roots = graph.filter((step) => !incoming.has(step.id))
 
-  function patchStep(id: string, patch: Partial<WorkflowStep>) {
-    setDraft((current) => {
-      if (!current) return current
-      return {
-        ...current,
-        steps: current.steps.map((step) => (step.id === id ? { ...step, ...patch } : step)),
-      }
-    })
+  function commit(next: WorkflowStep[], selectId?: string) {
+    if (hasCycle(next)) {
+      setError('Связь замыкает конвейер.')
+      setLinking(false)
+      return
+    }
+    setError(null)
+    setDraft({ ...draft, steps: withHandoffs(next) })
+    if (selectId) setSelected(selectId)
   }
 
-  function move(index: number, direction: -1 | 1) {
-    setDraft((current) => {
-      if (!current) return current
-      const target = index + direction
-      if (target < 0 || target >= current.steps.length) return current
-      const next = current.steps.slice()
-      const [item] = next.splice(index, 1)
-      next.splice(target, 0, item)
-      return { ...current, steps: fillHandoffs(next) }
-    })
+  function place(agent: Agent, how: 'sequence' | 'branch', where: 'selected' | 'tail' = 'selected') {
+    if (locked) return
+    const base = materialize(steps)
+    const id = crypto.randomUUID()
+    const created: WorkflowStep = {
+      id,
+      agentId: agent.id,
+      title: agent.name,
+      mode: agent.kind === 'architect' ? 'question' : agent.kind === 'reviewer' ? 'approval' : 'automatic',
+      handoff: '',
+      nextIds: [],
+    }
+    const anchor =
+      where === 'tail'
+        ? orderSteps(base).at(-1)
+        : base.find((step) => step.id === selected) ?? orderSteps(base).at(-1)
+    if (!anchor) {
+      commit([created], id)
+      return
+    }
+    if (how === 'branch') {
+      commit(
+        [
+          ...base.map((step) => (step.id === anchor.id ? { ...step, nextIds: [...step.nextIds, id] } : step)),
+          created,
+        ],
+        id,
+      )
+      return
+    }
+    created.nextIds = [...anchor.nextIds]
+    commit(
+      [...base.map((step) => (step.id === anchor.id ? { ...step, nextIds: [id] } : step)), created],
+      id,
+    )
+  }
+
+  function toggleAgent(agent: Agent, on: boolean) {
+    if (locked) return
+    if (on) {
+      place(agent, 'sequence', 'tail')
+      return
+    }
+    const base = materialize(steps)
+    const dropping = new Set(base.filter((step) => step.agentId === agent.id).map((step) => step.id))
+    if (base.length - dropping.size < 1) {
+      setError('В процессе нужен хотя бы один шаг.')
+      return
+    }
+    const kept = base
+      .filter((step) => !dropping.has(step.id))
+      .map((step) => ({
+        ...step,
+        nextIds: step.nextIds.flatMap((id) => {
+          if (!dropping.has(id)) return [id]
+          const removed = base.find((item) => item.id === id)
+          return (removed?.nextIds ?? []).filter((child) => !dropping.has(child) && child !== step.id)
+        }),
+      }))
+    commit(kept)
+    if (selected && dropping.has(selected)) setSelected(kept[0]?.id ?? null)
+  }
+
+  function connect(toId: string) {
+    if (!selected || selected === toId || locked) return
+    const base = materialize(steps)
+    commit(
+      base.map((step) =>
+        step.id === selected ? { ...step, nextIds: [...new Set([...step.nextIds, toId])] } : step,
+      ),
+    )
+    setLinking(false)
+  }
+
+  function unlink(childId: string) {
+    if (!selected || locked) return
+    const base = materialize(steps)
+    commit(
+      base.map((step) =>
+        step.id === selected ? { ...step, nextIds: step.nextIds.filter((id) => id !== childId) } : step,
+      ),
+    )
+  }
+
+  function removeSelected() {
+    if (!selectedStep || locked || graph.length < 2) return
+    const base = materialize(steps)
+    const dropping = selectedStep.id
+    const kept = base
+      .filter((step) => step.id !== dropping)
+      .map((step) => ({
+        ...step,
+        nextIds: step.nextIds.flatMap((id) => (id === dropping ? selectedStep.nextIds : [id])),
+      }))
+    commit(kept, kept[0]?.id)
   }
 
   async function save() {
+    const next = withHandoffs(materialize(draft.steps))
     setBusy(true)
     setError(null)
     try {
-      await api.saveWorkflow(draft.id, {
+      const saved = await api.saveWorkflow(draft.id, {
         name: draft.name,
         description: draft.description,
-        steps: fillHandoffs(draft.steps),
+        steps: next,
       })
+      upsertWorkflow(saved)
       await reload()
     } catch (reason) {
       setError(messageOf(reason))
@@ -151,11 +234,17 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
   }
 
   async function start() {
+    const next = withHandoffs(materialize(draft.steps))
     setBusy(true)
     setError(null)
     try {
+      const saved = await api.saveWorkflow(draft.id, {
+        name: draft.name,
+        description: draft.description,
+        steps: next,
+      })
+      upsertWorkflow(saved)
       const run = await api.startRun(workflowId, task, {
-        roleIds: picked,
         projectPath: projectPath.trim(),
         mapPath: mapPath.trim(),
       })
@@ -195,8 +284,8 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
     }
   }
 
-  const activeStepId =
-    live && live.stepIndex !== null ? live.steps[live.stepIndex]?.stepId ?? null : null
+  const activeStepId = live && live.stepIndex !== null ? live.steps[live.stepIndex]?.stepId ?? null : null
+  const doneIds = new Set((shown?.work ?? []).map((item) => item.stepId))
 
   return (
     <div className="canvas-page">
@@ -206,82 +295,42 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
             Процессы
           </a>
           <LayoutGroup>
-            <div className="flow" data-testid="canvas">
-              {flowSource ? (
-                <>
-                  <div className="flow-row">
-                    <div className="node task-pill">
-                      <span className="node-title">{taskTitle(flowSource.task)}</span>
-                      <span className="chev">›</span>
-                    </div>
-                    <div className="badge-slot" />
-                  </div>
-                  <div className="link-row">
-                    <i />
-                  </div>
-                </>
-              ) : null}
-              {flow.map((step, index) => {
-                const active = activeStepId === step.id
-                const done = Boolean(flowSource?.work.some((item) => item.stepId === step.id) && !active)
-                return (
-                  <div key={step.id}>
-                    <div className="flow-row">
-                      <button
-                        type="button"
-                        className={[
-                          'node',
-                          active ? 'is-active' : '',
-                          done ? 'is-done' : '',
-                          selectedStep?.id === step.id ? 'is-selected' : '',
-                        ]
-                          .filter(Boolean)
-                          .join(' ')}
-                        onClick={() => {
-                          if (steps.some((item) => item.id === step.id)) setSelected(step.id)
-                          setOpened(step.id)
-                        }}
-                        data-testid={active ? 'active-step' : `step-${step.id}`}
-                      >
-                        <StepMark index={index} />
-                        <span className="node-title">{step.title}</span>
-                        {step.mode === 'approval' ? <span className="mode-chip">проверка</span> : null}
-                        {step.mode === 'question' ? <span className="mode-chip">вопрос</span> : null}
-                        <span className="chev">›</span>
-                      </button>
-                      <div className="badge-slot">
-                        {active && live ? (
-                          <motion.span
-                            layoutId="live-badge"
-                            className={live.status === 'waiting_approval' ? 'badge wait' : 'badge'}
-                          >
-                            {live.status === 'waiting_approval'
-                              ? 'Ждёт подтверждения'
-                              : live.status === 'waiting_user'
-                                ? 'Ждёт ответа'
-                                : 'Выполняется'}
-                          </motion.span>
-                        ) : null}
-                      </div>
-                    </div>
-                    <div className="link-row">
-                      <i />
-                    </div>
-                  </div>
-                )
-              })}
-              {live ? (
-                <div className="flow-row">
-                  <div className="node status-pill">
-                    <span className="spark" aria-hidden="true">
-                      ✦
-                    </span>
-                    {statusLabel(live.status)}
-                  </div>
-                  <div className="badge-slot" />
-                </div>
-              ) : null}
+            {shown ? (
+              <div className="node task-pill">
+                <span className="node-title">{taskTitle(shown.task)}</span>
+              </div>
+            ) : null}
+            <div className="tree" data-testid="canvas">
+              {roots.map((step) => (
+                <Branch
+                  key={step.id}
+                  step={step}
+                  byId={byId}
+                  trail={new Set()}
+                  activeId={activeStepId}
+                  doneIds={doneIds}
+                  selectedId={selectedStep?.id ?? null}
+                  linking={linking}
+                  live={live ?? null}
+                  onPick={(id) => {
+                    if (linking && selected && selected !== id) {
+                      connect(id)
+                      return
+                    }
+                    setSelected(id)
+                    setOpened(id)
+                  }}
+                />
+              ))}
             </div>
+            {live ? (
+              <div className="node status-pill">
+                <span className="spark" aria-hidden="true">
+                  ✦
+                </span>
+                {statusLabel(live.status)}
+              </div>
+            ) : null}
           </LayoutGroup>
         </div>
       </div>
@@ -304,21 +353,45 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
         </label>
         <div className="roles">
           <span className="kicker">Роли задачи</span>
-          {roleAgents.map((agent) => (
-            <label key={agent.id}>
+          {palette.map((agent) => (
+            <div className="role-row" key={agent.id}>
               <input
+                id={`pick-${agent.id}`}
                 type="checkbox"
-                data-testid={`role-${agent.kind}`}
-                checked={picked.includes(agent.id)}
-                onChange={(event) => {
-                  setPicked((current) =>
-                    event.target.checked ? [...current, agent.id] : current.filter((id) => id !== agent.id),
-                  )
-                }}
+                data-testid={TASK_ROLES.includes(agent.kind) ? `role-${agent.kind}` : `role-pick-${agent.id}`}
+                checked={steps.some((step) => step.agentId === agent.id)}
+                disabled={locked}
+                onChange={(event) => toggleAgent(agent, event.target.checked)}
               />
-              {agent.name}
-            </label>
+              <label className="role-name" htmlFor={`pick-${agent.id}`}>
+                {agent.name}
+              </label>
+              <button type="button" className="text-btn" disabled={locked} onClick={() => place(agent, 'sequence')}>
+                Ещё
+              </button>
+            </div>
           ))}
+        </div>
+        <div className="editor">
+          <h2>Поставить на холст</h2>
+          <p className="hint">«Следом» вставляет шаг в цепочку. «Ответвить» ведёт вторую ветку от выбранного шага.</p>
+          {placeAgent ? (
+            <DarkSelect
+              testId="place-agent"
+              value={placeAgent.id}
+              disabled={locked}
+              options={palette.map((agent) => ({ value: agent.id, label: agent.name }))}
+              onChange={setPlaceAgentId}
+            />
+          ) : null}
+          <div className="row-actions">
+            <button type="button" data-testid="place-next" disabled={locked || !placeAgent} onClick={() => placeAgent && place(placeAgent, 'sequence')}>
+              Следом
+            </button>
+            <button type="button" data-testid="place-branch" disabled={locked || !placeAgent} onClick={() => placeAgent && place(placeAgent, 'branch')}>
+              Ответвить
+            </button>
+          </div>
         </div>
         <label className="field">
           <span>Папка проекта</span>
@@ -346,7 +419,7 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
           type="button"
           className="primary wide"
           data-testid="start-run"
-          disabled={busy || locked || !task.trim() || picked.length === 0}
+          disabled={busy || locked || !task.trim() || steps.length === 0}
           onClick={() => void start()}
         >
           Запустить
@@ -419,99 +492,87 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
               <input
                 value={selectedStep.title}
                 disabled={locked}
-                onChange={(event) => patchStep(selectedStep.id, { title: event.target.value })}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    steps: steps.map((step) => (step.id === selectedStep.id ? { ...step, title: event.target.value } : step)),
+                  })
+                }
               />
             </label>
-            <label className="field">
+            <div className="field">
               <span>Агент</span>
-              <select
+              <DarkSelect
                 value={selectedStep.agentId}
                 disabled={locked}
-                onChange={(event) => patchStep(selectedStep.id, { agentId: event.target.value })}
-              >
-                {agents.map((agent) => (
-                  <option key={agent.id} value={agent.id}>
-                    {agent.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
+                options={palette.map((agent) => ({ value: agent.id, label: agent.name }))}
+                onChange={(agentId) =>
+                  setDraft({
+                    ...draft,
+                    steps: steps.map((step) => (step.id === selectedStep.id ? { ...step, agentId } : step)),
+                  })
+                }
+              />
+            </div>
+            <div className="field">
               <span>Режим</span>
-              <select
+              <DarkSelect
                 value={selectedStep.mode}
                 disabled={locked}
-                onChange={(event) => patchStep(selectedStep.id, { mode: event.target.value as StepMode })}
-              >
-                <option value="automatic">Автоматически</option>
-                <option value="question">Ждёт ответа</option>
-                <option value="approval">Ждёт подтверждения</option>
-              </select>
-            </label>
+                options={MODE_OPTIONS}
+                onChange={(mode) =>
+                  setDraft({
+                    ...draft,
+                    steps: steps.map((step) =>
+                      step.id === selectedStep.id ? { ...step, mode: mode as StepMode } : step,
+                    ),
+                  })
+                }
+              />
+            </div>
             <label className="field">
               <span>Передача следующему</span>
               <textarea
                 value={selectedStep.handoff}
                 disabled={locked}
-                onChange={(event) => patchStep(selectedStep.id, { handoff: event.target.value })}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    steps: steps.map((step) =>
+                      step.id === selectedStep.id ? { ...step, handoff: event.target.value } : step,
+                    ),
+                  })
+                }
               />
             </label>
+            <p className="hint">Связи этого шага. Сосед выбирается на холсте.</p>
+            <ul className="link-list">
+              {selectedStep.nextIds.length === 0 ? <li className="muted">Дальше никого нет.</li> : null}
+              {selectedStep.nextIds.map((id) => (
+                <li key={id}>
+                  <span>{byId.get(id)?.title ?? 'Шаг'}</span>
+                  <button type="button" className="text-btn" disabled={locked} onClick={() => unlink(id)}>
+                    Убрать
+                  </button>
+                </li>
+              ))}
+            </ul>
             <div className="row-actions">
               <button
                 type="button"
-                disabled={locked || steps[0]?.id === selectedStep.id}
-                onClick={() => move(steps.findIndex((step) => step.id === selectedStep.id), -1)}
+                data-testid="link-step"
+                disabled={locked}
+                onClick={() => setLinking((current) => !current)}
               >
-                Выше
+                {linking ? 'Выберите шаг на холсте' : 'Связать с соседом'}
               </button>
-              <button
-                type="button"
-                disabled={locked || steps[steps.length - 1]?.id === selectedStep.id}
-                onClick={() => move(steps.findIndex((step) => step.id === selectedStep.id), 1)}
-              >
-                Ниже
-              </button>
-              <button
-                type="button"
-                disabled={locked || steps.length < 2}
-                onClick={() =>
-                  setDraft({
-                    ...draft,
-                    steps: fillHandoffs(steps.filter((step) => step.id !== selectedStep.id)),
-                  })
-                }
-              >
+              <button type="button" disabled={locked || graph.length < 2} onClick={removeSelected}>
                 Удалить
               </button>
             </div>
           </section>
         ) : null}
         <div className="row-actions">
-          <button
-            type="button"
-            disabled={locked || agents.length === 0}
-            onClick={() =>
-              setDraft({
-                ...draft,
-                steps: fillHandoffs([
-                  ...steps.map((step, index) =>
-                    index === steps.length - 1 && !step.handoff.trim()
-                      ? { ...step, handoff: 'Передай результат следующему шагу.' }
-                      : step,
-                  ),
-                  {
-                    id: crypto.randomUUID(),
-                    agentId: agents[0]?.id ?? '',
-                    title: 'Шаг',
-                    mode: 'automatic',
-                    handoff: '',
-                  },
-                ]),
-              })
-            }
-          >
-            Добавить шаг
-          </button>
           <button type="button" className="primary" disabled={busy || locked} onClick={() => void save()}>
             Сохранить процесс
           </button>
@@ -521,21 +582,86 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
   )
 }
 
-function fillHandoffs(steps: WorkflowStep[]): WorkflowStep[] {
-  return steps.map((step, index) => {
-    const last = index === steps.length - 1
-    if (!last && !step.handoff.trim()) {
-      return { ...step, handoff: 'Передай результат следующему шагу.' }
-    }
-    return step
-  })
+function Branch({
+  step,
+  byId,
+  trail,
+  activeId,
+  doneIds,
+  selectedId,
+  linking,
+  live,
+  onPick,
+}: {
+  step: WorkflowStep
+  byId: Map<string, WorkflowStep>
+  trail: Set<string>
+  activeId: string | null
+  doneIds: Set<string>
+  selectedId: string | null
+  linking: boolean
+  live: Run | null
+  onPick: (id: string) => void
+}) {
+  if (trail.has(step.id)) return null
+  const nextTrail = new Set(trail)
+  nextTrail.add(step.id)
+  const children = step.nextIds.map((id) => byId.get(id)).filter((item): item is WorkflowStep => Boolean(item))
+  const active = activeId === step.id
+  const done = doneIds.has(step.id) && !active
+  return (
+    <div className="branch">
+      <button
+        type="button"
+        className={[
+          'node',
+          'branch-node',
+          active ? 'is-active' : '',
+          done ? 'is-done' : '',
+          selectedId === step.id ? 'is-selected' : '',
+          linking && selectedId !== step.id ? 'is-target' : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        onClick={() => onPick(step.id)}
+        data-testid={active ? 'active-step' : `step-${step.id}`}
+      >
+        <span className="node-title">{step.title}</span>
+        {step.mode === 'approval' ? <span className="mode-chip">проверка</span> : null}
+        {step.mode === 'question' ? <span className="mode-chip">вопрос</span> : null}
+      </button>
+      {active && live ? (
+        <motion.span layoutId="live-badge" className={live.status === 'running' ? 'badge' : 'badge wait'}>
+          {live.status === 'waiting_approval'
+            ? 'Ждёт подтверждения'
+            : live.status === 'waiting_user'
+              ? 'Ждёт ответа'
+              : 'Выполняется'}
+        </motion.span>
+      ) : null}
+      {children.length > 0 ? (
+        <div className={children.length > 1 ? 'kids many' : 'kids'}>
+          {children.map((child) => (
+            <Branch
+              key={child.id}
+              step={child}
+              byId={byId}
+              trail={nextTrail}
+              activeId={activeId}
+              doneIds={doneIds}
+              selectedId={selectedId}
+              linking={linking}
+              live={live}
+              onPick={onPick}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
-function StepMark({ index }: { index: number }) {
-  const label = index === 0 ? '✶' : index === 1 ? '{' : '⌕'
-  return (
-    <span className="step-mark" aria-hidden="true">
-      {label}
-    </span>
-  )
+function agentRank(kind: AgentKind): number {
+  const index = TASK_ROLES.indexOf(kind)
+  return index === -1 ? TASK_ROLES.length : index
 }

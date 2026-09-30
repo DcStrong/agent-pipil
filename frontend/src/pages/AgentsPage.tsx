@@ -1,6 +1,7 @@
 /** Список агентов и форма нового типа. */
 import { useState, type FormEvent } from 'react'
 import { api, messageOf } from '../api'
+import { DarkSelect } from '../components/DarkSelect'
 import { agentOnline, harnessLabel, kindLabel } from '../format'
 import { useLive } from '../live'
 import { href } from '../route'
@@ -51,24 +52,34 @@ export function AgentsPage() {
           <input value={name} onChange={(event) => setName(event.target.value)} />
         </label>
         <div className="split">
-          <label className="field">
+          <div className="field">
             <span>Тип</span>
-            <select value={kind} onChange={(event) => setKind(event.target.value as AgentKind)}>
-              <option value="orchestrator">Оркестратор</option>
-              <option value="analyst">Аналитик</option>
-              <option value="architect">Архитектор</option>
-              <option value="developer">Бэкенд-разработчик</option>
-              <option value="tester">Тестировщик</option>
-              <option value="custom">Свой</option>
-            </select>
-          </label>
-          <label className="field">
+            <DarkSelect
+              testId="new-agent-kind"
+              value={kind}
+              options={[
+                { value: 'orchestrator', label: 'Оркестратор' },
+                { value: 'analyst', label: 'Аналитик' },
+                { value: 'architect', label: 'Архитектор' },
+                { value: 'developer', label: 'Бэкенд-разработчик' },
+                { value: 'tester', label: 'Тестировщик' },
+                { value: 'custom', label: 'Свой' },
+              ]}
+              onChange={(value) => setKind(value as AgentKind)}
+            />
+          </div>
+          <div className="field">
             <span>Среда</span>
-            <select value={harness} onChange={(event) => setHarness(event.target.value as Harness)}>
-              <option value="simulated">Имитация</option>
-              <option value="cursor">Cursor</option>
-            </select>
-          </label>
+            <DarkSelect
+              testId="new-agent-harness"
+              value={harness}
+              options={[
+                { value: 'simulated', label: 'Имитация' },
+                { value: 'cursor', label: 'Cursor' },
+              ]}
+              onChange={(value) => setHarness(value as Harness)}
+            />
+          </div>
         </div>
         <label className="field">
           <span>Инструкции</span>

@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { Observable, Subject } from 'rxjs';
 import type { AgentKind, Run, RunStep, StepMode } from '../domain';
 import { roleOrder } from '../domain';
+import { orderSteps } from '../runtime/step-graph';
 import { CursorClient } from '../runtime/cursor-client';
 import { Orchestrator, readDelayMs } from '../runtime/orchestrator';
 import { inspectProject } from '../runtime/project-folder';
@@ -208,7 +209,7 @@ export class RunsService {
     if (workflow.steps.length === 0) {
       throw new BadRequestException('В процессе нет шагов.');
     }
-    return workflow.steps.map((step) => {
+    return orderSteps(workflow.steps).map((step) => {
       const agent = state.agents.find((item) => item.id === step.agentId);
       if (!agent)
         throw new BadRequestException('Шаг ссылается на удалённого агента.');
