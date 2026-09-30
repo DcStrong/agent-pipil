@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react'
 export type Route =
   | { name: 'workflows' }
   | { name: 'canvas'; workflowId: string }
+  | { name: 'board' }
+  | { name: 'plan'; taskId: string }
   | { name: 'runs' }
   | { name: 'run'; runId: string }
   | { name: 'agents' }
@@ -13,6 +15,8 @@ export function parseRoute(hash: string): Route {
   const path = hash.replace(/^#\/?/, '')
   const [head, id] = path.split('/')
   if (head === 'workflow' && id) return { name: 'canvas', workflowId: decodeURIComponent(id) }
+  if (head === 'board') return { name: 'board' }
+  if (head === 'plan' && id) return { name: 'plan', taskId: decodeURIComponent(id) }
   if (head === 'run' && id) return { name: 'run', runId: decodeURIComponent(id) }
   if (head === 'agent' && id) return { name: 'agent', agentId: decodeURIComponent(id) }
   if (head === 'runs') return { name: 'runs' }
@@ -33,6 +37,8 @@ export function useRoute(): Route {
 
 export function href(route: Route): string {
   if (route.name === 'canvas') return `#/workflow/${route.workflowId}`
+  if (route.name === 'board') return '#/board'
+  if (route.name === 'plan') return `#/plan/${route.taskId}`
   if (route.name === 'run') return `#/run/${route.runId}`
   if (route.name === 'agent') return `#/agent/${route.agentId}`
   if (route.name === 'runs') return '#/runs'

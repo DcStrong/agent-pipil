@@ -50,6 +50,16 @@ export function IconGear({ className }: IconProps) {
   )
 }
 
+export function IconBoard({ className }: IconProps) {
+  return (
+    <Svg className={className}>
+      <rect x="3.5" y="4" width="4.5" height="16" rx="1.2" />
+      <rect x="9.75" y="4" width="4.5" height="11" rx="1.2" />
+      <rect x="16" y="4" width="4.5" height="14" rx="1.2" />
+    </Svg>
+  )
+}
+
 export function IconPlus({ className }: IconProps) {
   return (
     <Svg className={className}>

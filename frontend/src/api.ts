@@ -1,6 +1,8 @@
 import type {
   Agent,
   AgentKind,
+  BoardStatus,
+  BoardTask,
   CursorConnection,
   Harness,
   Health,
@@ -8,6 +10,7 @@ import type {
   Skill,
   SkillScope,
   StreamMessage,
+  TeamMember,
   Workflow,
   WorkflowStep,
 } from './types'
@@ -94,6 +97,15 @@ export const api = {
       body: JSON.stringify({ token }),
     }),
   clearCursor: () => request<CursorConnection>('/api/settings/cursor', { method: 'DELETE' }),
+  board: () => request<BoardTask[]>('/api/board'),
+  createTask: (body: { title: string; description: string; team: TeamMember[] }) =>
+    request<BoardTask>('/api/board', { method: 'POST', body: JSON.stringify(body) }),
+  moveTask: (id: string, status: BoardStatus) =>
+    request<BoardTask>(`/api/board/${id}/move`, { method: 'POST', body: JSON.stringify({ status }) }),
+  savePlan: (id: string, text: string) =>
+    request<BoardTask>(`/api/board/${id}/plan`, { method: 'PUT', body: JSON.stringify({ text }) }),
+  handPlan: (id: string, text: string) =>
+    request<BoardTask>(`/api/board/${id}/build`, { method: 'POST', body: JSON.stringify({ text }) }),
 }
 
 export function subscribeRuns(onMessage: (message: StreamMessage) => void): () => void {

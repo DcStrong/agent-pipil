@@ -101,4 +101,108 @@ describe('Оркестратор (e2e)', () => {
     expect(current.status).toBe('completed');
     expect(current.finalResult).toContain('Добавить экспорт в webp');
   });
+
+  it('ведёт задачи доски из новых через план в проверку и не зовёт Cursor', async () => {
+    const server = app.getHttpServer();
+    const secret = 'cursor_live_must_not_run';
+    await request(server)
+      .put('/api/settings/cursor')
+      .send({ token: secret })
+      .expect(200);
+
+    const created = await request(server)
+      .post('/api/board')
+      .send({
+        title: 'Доска',
+        description: 'Нужен план до сборки',
+        team: [
+          { agentId: 'role_architect', mode: 'plan' },
+          { agentId: 'agent_builder', mode: 'agent' },
+        ],
+      })
+      .expect(201);
+    const asked = await request(server)
+      .post('/api/board')
+      .send({
+        title: 'Только вопрос',
+        team: [{ agentId: 'role_analyst', mode: 'ask' }],
+      })
+      .expect(201);
+    expect(created.body.status).toBe('new');
+    expect(asked.body.status).toBe('new');
+
+    const moved = await request(server)
+      .post(`/api/board/${created.body.id}/move`)
+      .send({ status: 'in_progress' })
+      .expect(201);
+    expect(moved.body.status).toBe('in_progress');
+    expect(moved.body.activity[0].note).toContain('Взял задачу');
+    expect(JSON.stringify(moved.body)).not.toContain(secret);
+
+    await request(server)
+      .post(`/api/board/${created.body.id}/move`)
+      .send({ status: 'review' })
+      .expect(400);
+
+    let current = moved.body as {
+      status: string;
+      phase: string;
+      plan: { authorName: string; text: string } | null;
+    };
+    for (
+      let attempt = 0;
+      attempt < 40 && current.phase !== 'plan';
+      attempt += 1
+    ) {
+      current = (await request(server).get(`/api/board/${created.body.id}`))
+        .body;
+      if (current.phase === 'plan') break;
+      await new Promise((resolve) => setTimeout(resolve, 15));
+    }
+    expect(current.phase).toBe('plan');
+    expect(current.plan?.authorName).toBe('Архитектор');
+
+    const edited = 'Исправленный план для сборки.';
+    const saved = await request(server)
+      .put(`/api/board/${created.body.id}/plan`)
+      .send({ text: edited })
+      .expect(200);
+    expect(saved.body.plan.text).toBe(edited);
+
+    await request(server)
+      .post(`/api/board/${created.body.id}/build`)
+      .send({ text: edited })
+      .expect(201);
+
+    for (
+      let attempt = 0;
+      attempt < 40 && current.status !== 'review';
+      attempt += 1
+    ) {
+      current = (await request(server).get(`/api/board/${created.body.id}`))
+        .body;
+      if (current.status === 'review') break;
+      await new Promise((resolve) => setTimeout(resolve, 15));
+    }
+    expect(current.status).toBe('review');
+    expect(current.plan?.text).toBe(edited);
+
+    await request(server)
+      .post(`/api/board/${asked.body.id}/move`)
+      .send({ status: 'in_progress' })
+      .expect(201);
+    let question = asked.body as { status: string; plan: unknown };
+    for (
+      let attempt = 0;
+      attempt < 40 && question.status !== 'review';
+      attempt += 1
+    ) {
+      question = (await request(server).get(`/api/board/${asked.body.id}`))
+        .body;
+      if (question.status === 'review') break;
+      await new Promise((resolve) => setTimeout(resolve, 15));
+    }
+    expect(question.status).toBe('review');
+    expect(question.plan).toBeNull();
+  });
 });

@@ -1,4 +1,6 @@
-/** Модель локального оркестратора: агенты, шаги, точки проверки и запуски. */
+import { parseBoardTasks, type BoardTask } from './board/model';
+
+/** Модель локального оркестратора: агенты, шаги, точки проверки, запуски и доска. */
 
 export type AgentKind =
   | 'orchestrator'
@@ -14,18 +16,9 @@ export type Harness = 'simulated' | 'cursor';
 export type StepMode = 'automatic' | 'approval' | 'question';
 export type SkillScope = 'shared' | 'agent';
 export type RunStatus =
-  | 'running'
-  | 'waiting_approval'
-  | 'waiting_user'
-  | 'completed'
-  | 'failed';
+  'running' | 'waiting_approval' | 'waiting_user' | 'completed' | 'failed';
 export type RunEventKind =
-  | 'progress'
-  | 'handoff'
-  | 'approval'
-  | 'question'
-  | 'error'
-  | 'done';
+  'progress' | 'handoff' | 'approval' | 'question' | 'error' | 'done';
 export type ReturnShape = 'object' | 'array' | 'none';
 export type DialogueAuthor = 'role' | 'user' | 'handoff';
 
@@ -164,6 +157,8 @@ export interface State {
   skills: Skill[];
   workflows: Workflow[];
   runs: Run[];
+  /** Задачи доски. Колонки: new, in_progress, review. */
+  tasks: BoardTask[];
   /** Секрет хранится только на сервере и не уходит в браузер целиком. */
   cursorToken: string | null;
 }
@@ -407,6 +402,7 @@ export function createSeedState(): State {
       },
     ],
     runs: [],
+    tasks: [],
     cursorToken: null,
   };
 }
@@ -703,8 +699,7 @@ function parseRun(value: unknown): Run {
     createdAt: text(value.createdAt, 'создание запуска'),
     updatedAt: text(value.updatedAt, 'обновление запуска'),
     finishedAt,
-    project:
-      value.project === undefined ? null : parseProject(value.project),
+    project: value.project === undefined ? null : parseProject(value.project),
     developerShape: parseShape(value.developerShape),
     pendingQuestion:
       typeof value.pendingQuestion === 'string' ? value.pendingQuestion : null,
@@ -730,6 +725,7 @@ export function parseState(value: unknown): State {
     skills: value.skills.map(parseSkill),
     workflows: value.workflows.map(parseWorkflow),
     runs: value.runs.map(parseRun),
+    tasks: parseBoardTasks(value.tasks),
     cursorToken,
   };
 }
