@@ -467,10 +467,10 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
           <div className="decision">
             <p>Шаг ждёт вашего подтверждения. Пока вы не решите, задача не идёт дальше.</p>
             <div className="row-actions">
-              <button type="button" className="primary" data-testid="approve" disabled={busy} onClick={() => void decide('approve')}>
+              <button type="button" className="primary decision-btn" data-testid="approve" disabled={busy} onClick={() => void decide('approve')}>
                 Одобрить
               </button>
-              <button type="button" data-testid="reject" disabled={busy} onClick={() => void decide('reject')}>
+              <button type="button" className="decision-btn" data-testid="reject" disabled={busy} onClick={() => void decide('reject')}>
                 Отклонить
               </button>
             </div>

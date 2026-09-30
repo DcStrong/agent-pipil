@@ -385,7 +385,7 @@ button.primary, .primary {
   padding: 10px 14px;
   font-weight: 650;
 }
-button:not(.primary):not(.icon-btn):not(.text-btn):not(.node):not(.menu-item):not(.dark-select-btn) {
+button:not(.primary):not(.icon-btn):not(.text-btn):not(.node):not(.menu-item):not(.dark-select-btn):not(.decision-btn) {
   border: 1px solid #34343a;
   border-radius: 10px;
   background: #1b1b1f;
@@ -395,13 +395,37 @@ button:disabled { opacity: 0.45; cursor: default; }
 .wide { width: 100%; }
 .row-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .decision {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  flex: 0 0 auto;
   padding: 12px;
   border: 1px solid #5a4a1d;
   border-radius: 12px;
   background: #1a160d;
 }
 .decision p, .now { color: var(--muted); font-size: 14px; line-height: 1.4; }
+.decision .row-actions { width: auto; margin: 0; }
+.decision button.decision-btn {
+  width: auto;
+  height: auto;
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  font-size: 13px;
+  line-height: 1.2;
+  border: 1px solid #34343a;
+  border-radius: 10px;
+  background: #1b1b1f;
+}
+.decision button.decision-btn.primary {
+  border: 0;
+  background: #f2f2f3;
+  color: #111114;
+}
 .result {
+  flex: 0 0 auto;
+  margin-top: 16px;
   padding: 12px;
   border: 1px solid #245c3a;
   border-radius: 12px;
@@ -519,8 +543,15 @@ button:disabled { opacity: 0.45; cursor: default; }
 }
 .dark-menu .menu-item:hover,
 .dark-menu .menu-item.is-on { background: #2a2a30; color: var(--text); }
-.dialogue { display: flex; flex-direction: column; gap: 8px; }
+.dialogue {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  flex: 0 0 auto;
+}
 .bubble {
+  flex: 0 0 auto;
   margin: 0;
   padding: 8px 10px;
   border-radius: 10px;
