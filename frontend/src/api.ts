@@ -1,15 +1,20 @@
 import type {
+  Agent,
+  AgentKind,
+  CursorConnection,
+  Harness,
   Health,
-  PipelineStage,
-  Role,
   Run,
   Skill,
+  SkillScope,
   StreamMessage,
+  Workflow,
+  WorkflowStep,
 } from './types'
 
 export function messageOf(error: unknown): string {
   if (error instanceof Error && error.message) return error.message
-  return 'Something went wrong.'
+  return 'Что-то пошло не так.'
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -21,56 +26,56 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     },
   })
   if (!response.ok) {
-    let message = response.statusText
+    let message = 'Запрос не выполнен.'
     try {
       const body = (await response.json()) as { message?: string | string[] }
       if (Array.isArray(body.message)) message = body.message.join(' ')
       else if (typeof body.message === 'string' && body.message) message = body.message
     } catch {
-      message = response.statusText
+      message = 'Запрос не выполнен.'
     }
-    throw new Error(message || 'Request failed.')
+    throw new Error(message)
   }
   return (await response.json()) as T
 }
 
 export const api = {
   health: () => request<Health>('/api/health'),
-  roles: () => request<Role[]>('/api/roles'),
-  createRole: (body: { name: string; systemPrompt: string }) =>
-    request<Role>('/api/roles', { method: 'POST', body: JSON.stringify(body) }),
-  updateRole: (id: string, body: { name: string; systemPrompt: string }) =>
-    request<Role>(`/api/roles/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
-  deleteRole: (id: string) =>
-    request<{ ok: true }>(`/api/roles/${id}`, { method: 'DELETE' }),
+  agents: () => request<Agent[]>('/api/agents'),
+  agent: (id: string) => request<Agent>(`/api/agents/${id}`),
+  createAgent: (body: { name: string; kind: AgentKind; instructions: string; harness: Harness }) =>
+    request<Agent>('/api/agents', { method: 'POST', body: JSON.stringify(body) }),
+  updateAgent: (id: string, body: { name: string; kind: AgentKind; instructions: string; harness: Harness }) =>
+    request<Agent>(`/api/agents/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  deleteAgent: (id: string) => request<{ ok: true }>(`/api/agents/${id}`, { method: 'DELETE' }),
   skills: () => request<Skill[]>('/api/skills'),
-  createSkill: (body: {
-    name: string
-    instructions: string
-    scope: 'shared' | 'role'
-    roleId: string | null
-  }) => request<Skill>('/api/skills', { method: 'POST', body: JSON.stringify(body) }),
-  updateSkill: (
+  createSkill: (body: { name: string; instructions: string; scope: SkillScope; agentId: string | null }) =>
+    request<Skill>('/api/skills', { method: 'POST', body: JSON.stringify(body) }),
+  deleteSkill: (id: string) => request<{ ok: true }>(`/api/skills/${id}`, { method: 'DELETE' }),
+  workflows: () => request<Workflow[]>('/api/workflows'),
+  workflow: (id: string) => request<Workflow>(`/api/workflows/${id}`),
+  createWorkflow: (name: string) =>
+    request<Workflow>('/api/workflows', { method: 'POST', body: JSON.stringify({ name }) }),
+  saveWorkflow: (
     id: string,
-    body: {
-      name: string
-      instructions: string
-      scope: 'shared' | 'role'
-      roleId: string | null
-    },
-  ) => request<Skill>(`/api/skills/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
-  deleteSkill: (id: string) =>
-    request<{ ok: true }>(`/api/skills/${id}`, { method: 'DELETE' }),
-  pipeline: () => request<PipelineStage[]>('/api/pipeline'),
-  savePipeline: (stages: PipelineStage[]) =>
-    request<PipelineStage[]>('/api/pipeline', {
-      method: 'PUT',
-      body: JSON.stringify({ stages }),
-    }),
+    body: { name: string; description: string; steps: WorkflowStep[] },
+  ) => request<Workflow>(`/api/workflows/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
   runs: () => request<Run[]>('/api/runs'),
   run: (id: string) => request<Run>(`/api/runs/${id}`),
-  startRun: (task: string) =>
-    request<Run>('/api/runs', { method: 'POST', body: JSON.stringify({ task }) }),
+  startRun: (workflowId: string, task: string) =>
+    request<Run>('/api/runs', { method: 'POST', body: JSON.stringify({ workflowId, task }) }),
+  decide: (id: string, decision: 'approve' | 'reject') =>
+    request<Run>(`/api/runs/${id}/decision`, {
+      method: 'POST',
+      body: JSON.stringify({ decision }),
+    }),
+  cursor: () => request<CursorConnection>('/api/settings/cursor'),
+  saveCursor: (token: string) =>
+    request<CursorConnection>('/api/settings/cursor', {
+      method: 'PUT',
+      body: JSON.stringify({ token }),
+    }),
+  clearCursor: () => request<CursorConnection>('/api/settings/cursor', { method: 'DELETE' }),
 }
 
 export function subscribeRuns(onMessage: (message: StreamMessage) => void): () => void {
@@ -79,8 +84,15 @@ export function subscribeRuns(onMessage: (message: StreamMessage) => void): () =
     try {
       onMessage(JSON.parse(event.data) as StreamMessage)
     } catch {
-      // Ignore a malformed event.
+      // Служебный пакет без JSON пропускаем.
     }
   }
   return () => source.close()
+}
+
+export function mergeRun(list: Run[], run: Run): Run[] {
+  const existing = list.find((item) => item.id === run.id)
+  if (existing && existing.updatedAt > run.updatedAt) return list
+  const rest = list.filter((item) => item.id !== run.id)
+  return [run, ...rest].sort((left, right) => right.createdAt.localeCompare(left.createdAt))
 }

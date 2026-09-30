@@ -46,8 +46,10 @@ export class StoreService {
     return found ? structuredClone(found) : null;
   }
 
-  hasRunningRun(): boolean {
-    return this.state.runs.some((run) => run.status === 'running');
+  hasActiveRun(): boolean {
+    return this.state.runs.some(
+      (run) => run.status === 'running' || run.status === 'waiting_approval',
+    );
   }
 
   async whenSaved(): Promise<void> {
@@ -59,8 +61,10 @@ export class StoreService {
   }
 
   relevantRun(): Run | null {
-    const running = this.state.runs.find((run) => run.status === 'running');
-    const chosen = running ?? this.state.runs[0];
+    const active = this.state.runs.find(
+      (run) => run.status === 'running' || run.status === 'waiting_approval',
+    );
+    const chosen = active ?? this.state.runs[0];
     return chosen ? structuredClone(chosen) : null;
   }
 
@@ -76,6 +80,16 @@ export class StoreService {
       if (code === 'ENOENT') {
         return { state: createSeedState(), wroteSeed: true };
       }
+      // Старый файл доски или битый JSON не должен ронять сервер.
+      if (
+        error instanceof SyntaxError ||
+        (error instanceof Error && error.message.startsWith('Состояние'))
+      ) {
+        this.logger.warn(
+          'Файл состояния не подошёл к новой модели, записываю начальные данные.',
+        );
+        return { state: createSeedState(), wroteSeed: true };
+      }
       throw error;
     }
   }
@@ -83,17 +97,18 @@ export class StoreService {
   private failInterruptedRuns(): boolean {
     let changed = false;
     for (const run of this.state.runs) {
-      if (run.status !== 'running') continue;
+      if (run.status !== 'running' && run.status !== 'waiting_approval')
+        continue;
       run.status = 'failed';
-      run.error = 'The server restarted before this run finished.';
+      run.error = 'Сервер перезапустился, пока запуск ещё шёл.';
       run.updatedAt = new Date().toISOString();
+      run.finishedAt = run.updatedAt;
       run.events.push({
         id: randomUUID(),
         at: run.updatedAt,
-        kind: 'failed',
+        kind: 'error',
         message: run.error,
-        stageIndex: run.stageIndex,
-        roleId: run.ownerRoleId,
+        stepIndex: run.stepIndex,
       });
       changed = true;
     }

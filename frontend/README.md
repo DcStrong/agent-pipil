@@ -1,5 +1,5 @@
 # Frontend
 
-React board for the local pipeline.
+Тёмный интерфейс на React: процессы, холст конвейера, запуски и карточка агента. Тексты экранов на русском.
 
-See the repository README for how to run the frontend and the backend.
+Как запускать вместе с backend — в README корня.

@@ -1,20 +1,19 @@
 import { Test } from '@nestjs/testing';
-import { AGENT_RUNTIME } from './agents/agent-runtime';
 import { AppController } from './app.controller';
+import { SettingsService } from './settings/settings.service';
 
 describe('AppController', () => {
-  it('reports the simulated agent mode', async () => {
+  it('сообщает, что Cursor не подключён', async () => {
     const moduleRef = await Test.createTestingModule({
       controllers: [AppController],
       providers: [
         {
-          provide: AGENT_RUNTIME,
-          useValue: { mode: 'simulated', complete: () => Promise.resolve({}) },
+          provide: SettingsService,
+          useValue: { hasToken: () => false },
         },
       ],
     }).compile();
-
     const controller = moduleRef.get(AppController);
-    expect(controller.health()).toEqual({ ok: true, agentMode: 'simulated' });
+    expect(controller.health()).toEqual({ ok: true, cursorConnected: false });
   });
 });

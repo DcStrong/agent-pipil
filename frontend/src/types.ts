@@ -1,29 +1,45 @@
-export type AgentMode = 'simulated' | 'model'
+export type AgentKind = 'planner' | 'builder' | 'reviewer' | 'custom'
+export type Harness = 'simulated' | 'cursor'
+export type StepMode = 'automatic' | 'approval'
+export type SkillScope = 'shared' | 'agent'
+export type RunStatus = 'running' | 'waiting_approval' | 'completed' | 'failed'
 
-export interface Role {
+export interface Agent {
   id: string
   name: string
-  systemPrompt: string
+  kind: AgentKind
+  instructions: string
+  harness: Harness
 }
 
 export interface Skill {
   id: string
   name: string
   instructions: string
-  scope: 'shared' | 'role'
-  roleId: string | null
+  scope: SkillScope
+  agentId: string | null
 }
 
-export interface PipelineStage {
+export interface WorkflowStep {
   id: string
-  roleId: string
-  handoffInstruction: string
+  agentId: string
+  title: string
+  mode: StepMode
+  handoff: string
 }
 
-export interface StageWork {
-  stageId: string
-  roleId: string
-  roleName: string
+export interface Workflow {
+  id: string
+  name: string
+  description: string
+  steps: WorkflowStep[]
+}
+
+export interface StepWork {
+  stepId: string
+  agentId: string
+  agentName: string
+  title: string
   output: string
   summary: string
   startedAt: string
@@ -33,44 +49,49 @@ export interface StageWork {
 export interface RunEvent {
   id: string
   at: string
-  kind: 'started' | 'stage_started' | 'handoff' | 'completed' | 'failed'
+  kind: 'progress' | 'handoff' | 'approval' | 'error' | 'done'
   message: string
-  stageIndex: number | null
-  roleId: string | null
+  stepIndex: number | null
 }
 
-export interface RunStage {
-  stageId: string
-  roleId: string
-  roleName: string
-  systemPrompt: string
-  handoffInstruction: string
-  skills: Array<{
-    name: string
-    instructions: string
-    scope: 'shared' | 'role'
-  }>
+export interface RunStep {
+  stepId: string
+  agentId: string
+  agentName: string
+  title: string
+  mode: StepMode
+  handoff: string
+  instructions: string
+  harness: Harness
+  skills: Array<{ name: string; instructions: string; scope: SkillScope }>
 }
 
 export interface Run {
   id: string
+  workflowId: string
+  workflowName: string
   task: string
-  status: 'running' | 'completed' | 'failed'
-  stageIndex: number | null
-  ownerRoleId: string | null
-  ownerName: string | null
-  stages: RunStage[]
-  work: StageWork[]
+  status: RunStatus
+  stepIndex: number | null
+  steps: RunStep[]
+  work: StepWork[]
   events: RunEvent[]
   finalResult: string | null
   error: string | null
   createdAt: string
   updatedAt: string
+  finishedAt: string | null
 }
 
-export type StreamMessage = { type: 'run'; run: Run } | { type: 'idle' }
+export interface CursorConnection {
+  connected: boolean
+  source: 'none' | 'saved' | 'env'
+  hint: string | null
+}
 
 export interface Health {
   ok: true
-  agentMode: AgentMode
+  cursorConnected: boolean
 }
+
+export type StreamMessage = { type: 'run'; run: Run } | { type: 'idle' }

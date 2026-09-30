@@ -1,9 +1,19 @@
-export type SkillScope = 'shared' | 'role';
+/** Модель локального оркестратора: агенты, шаги, точки проверки и запуски. */
 
-export interface Role {
+export type AgentKind = 'planner' | 'builder' | 'reviewer' | 'custom';
+export type Harness = 'simulated' | 'cursor';
+export type StepMode = 'automatic' | 'approval';
+export type SkillScope = 'shared' | 'agent';
+export type RunStatus = 'running' | 'waiting_approval' | 'completed' | 'failed';
+export type RunEventKind =
+  'progress' | 'handoff' | 'approval' | 'error' | 'done';
+
+export interface Agent {
   id: string;
   name: string;
-  systemPrompt: string;
+  kind: AgentKind;
+  instructions: string;
+  harness: Harness;
 }
 
 export interface Skill {
@@ -11,86 +21,98 @@ export interface Skill {
   name: string;
   instructions: string;
   scope: SkillScope;
-  roleId: string | null;
+  agentId: string | null;
 }
 
-export interface PipelineStage {
+export interface WorkflowStep {
   id: string;
-  roleId: string;
-  handoffInstruction: string;
+  agentId: string;
+  title: string;
+  mode: StepMode;
+  handoff: string;
 }
 
-export interface AgentSkill {
+export interface Workflow {
+  id: string;
+  name: string;
+  description: string;
+  steps: WorkflowStep[];
+}
+
+export interface AgentSkillSnapshot {
   name: string;
   instructions: string;
   scope: SkillScope;
 }
 
-export interface RunStageSnapshot {
-  stageId: string;
-  roleId: string;
-  roleName: string;
-  systemPrompt: string;
-  handoffInstruction: string;
-  skills: AgentSkill[];
+export interface RunStep {
+  stepId: string;
+  agentId: string;
+  agentName: string;
+  title: string;
+  mode: StepMode;
+  handoff: string;
+  instructions: string;
+  harness: Harness;
+  skills: AgentSkillSnapshot[];
 }
 
-export interface StageWork {
-  stageId: string;
-  roleId: string;
-  roleName: string;
+export interface StepWork {
+  stepId: string;
+  agentId: string;
+  agentName: string;
+  title: string;
   output: string;
   summary: string;
   startedAt: string;
   finishedAt: string;
 }
 
-export type RunEventKind =
-  'started' | 'stage_started' | 'handoff' | 'completed' | 'failed';
-
 export interface RunEvent {
   id: string;
   at: string;
   kind: RunEventKind;
   message: string;
-  stageIndex: number | null;
-  roleId: string | null;
+  stepIndex: number | null;
 }
-
-export type RunStatus = 'running' | 'completed' | 'failed';
 
 export interface Run {
   id: string;
+  workflowId: string;
+  workflowName: string;
   task: string;
   status: RunStatus;
-  stageIndex: number | null;
-  ownerRoleId: string | null;
-  ownerName: string | null;
-  stages: RunStageSnapshot[];
-  work: StageWork[];
+  stepIndex: number | null;
+  steps: RunStep[];
+  work: StepWork[];
   events: RunEvent[];
   finalResult: string | null;
   error: string | null;
   createdAt: string;
   updatedAt: string;
+  finishedAt: string | null;
 }
 
 export interface State {
-  roles: Role[];
+  agents: Agent[];
   skills: Skill[];
-  stages: PipelineStage[];
+  workflows: Workflow[];
   runs: Run[];
+  /** Секрет хранится только на сервере и не уходит в браузер целиком. */
+  cursorToken: string | null;
 }
 
 export interface AgentContext {
-  roleName: string;
-  systemPrompt: string;
-  skills: AgentSkill[];
+  agentName: string;
+  title: string;
+  instructions: string;
+  skills: AgentSkillSnapshot[];
   task: string;
-  priorWork: Array<{ roleName: string; output: string }>;
+  priorWork: Array<{ title: string; agentName: string; output: string }>;
   incomingHandoff: string | null;
   outgoingHandoff: string;
-  isFinalStage: boolean;
+  isFinalStep: boolean;
+  requiresApproval: boolean;
 }
 
 export interface AgentTurn {
@@ -98,129 +120,124 @@ export interface AgentTurn {
   summary: string;
 }
 
-const ANALYST_PROMPT = [
-  'You are the analyst.',
-  'Clarify the task, name the problem, list assumptions, and write success criteria.',
-  'Do not design the system or write an implementation.',
+const PLANNER_INSTRUCTIONS = [
+  'Ты планировщик.',
+  'Уточни задачу, назови проблему, допущения и критерии готовности.',
+  'Не пиши реализацию.',
 ].join(' ');
 
-const ARCHITECT_PROMPT = [
-  'You are the architect.',
-  'Turn the analysis into a small technical approach: the parts involved, how they connect, and what the developer must not change.',
-  'Do not implement the work.',
+const BUILDER_INSTRUCTIONS = [
+  'Ты сборщик.',
+  'Преврати план в конкретные изменения и проверку.',
+  'Не расширяй задачу.',
 ].join(' ');
 
-const DEVELOPER_PROMPT = [
-  'You are the developer.',
-  'Turn the approach into concrete changes someone could make, including edge cases.',
-  'Stay inside the task. Do not reopen the product scope.',
-].join(' ');
-
-const REVIEWER_PROMPT = [
-  'You are the reviewer.',
-  'Check the earlier work against the original task.',
-  'End with a verdict and a final result that can be read on its own.',
+const REVIEWER_INSTRUCTIONS = [
+  'Ты ревьюер.',
+  'Сверь работу с исходной задачей.',
+  'Закончи разделом «Итог», который можно прочитать отдельно.',
 ].join(' ');
 
 export function createSeedState(): State {
   return {
-    roles: [
+    agents: [
       {
-        id: 'role_analyst',
-        name: 'Analyst',
-        systemPrompt: ANALYST_PROMPT,
+        id: 'agent_planner',
+        name: 'Планировщик',
+        kind: 'planner',
+        instructions: PLANNER_INSTRUCTIONS,
+        harness: 'simulated',
       },
       {
-        id: 'role_architect',
-        name: 'Architect',
-        systemPrompt: ARCHITECT_PROMPT,
+        id: 'agent_builder',
+        name: 'Сборщик',
+        kind: 'builder',
+        instructions: BUILDER_INSTRUCTIONS,
+        harness: 'cursor',
       },
       {
-        id: 'role_developer',
-        name: 'Developer',
-        systemPrompt: DEVELOPER_PROMPT,
-      },
-      {
-        id: 'role_reviewer',
-        name: 'Reviewer',
-        systemPrompt: REVIEWER_PROMPT,
+        id: 'agent_reviewer',
+        name: 'Ревьюер',
+        kind: 'reviewer',
+        instructions: REVIEWER_INSTRUCTIONS,
+        harness: 'simulated',
       },
     ],
     skills: [
       {
         id: 'skill_scope',
-        name: 'Stay in scope',
-        instructions:
-          'Only address the task that was sent. Do not add neighboring features.',
+        name: 'Держать рамку',
+        instructions: 'Делай только то, что написано в задаче.',
         scope: 'shared',
-        roleId: null,
+        agentId: null,
       },
       {
         id: 'skill_handoff',
-        name: 'Write for the next role',
+        name: 'Писать для передачи',
         instructions:
-          'Leave a short section the next role can continue from without asking the user to restate the task.',
+          'Оставь короткую заметку, с которой следующий агент продолжит без повтора задачи.',
         scope: 'shared',
-        roleId: null,
+        agentId: null,
       },
       {
-        id: 'skill_analyst_facts',
-        name: 'Separate facts',
-        instructions: 'Mark what the task states and what you are assuming.',
-        scope: 'role',
-        roleId: 'role_analyst',
+        id: 'skill_planner',
+        name: 'Отделить факты',
+        instructions: 'Отметь, что сказано в задаче, а что ты допускаешь.',
+        scope: 'agent',
+        agentId: 'agent_planner',
       },
       {
-        id: 'skill_architect_small',
-        name: 'Smallest design',
+        id: 'skill_builder',
+        name: 'Назвать изменения',
         instructions:
-          'Prefer the smallest approach that meets the success criteria.',
-        scope: 'role',
-        roleId: 'role_architect',
+          'Назови шаги, границы и проверку. Не останавливайся на лозунге.',
+        scope: 'agent',
+        agentId: 'agent_builder',
       },
       {
-        id: 'skill_developer_concrete',
-        name: 'Name the changes',
+        id: 'skill_reviewer',
+        name: 'Дать вердикт',
         instructions:
-          'Name the steps, boundaries, and checks. Do not stop at a slogan.',
-        scope: 'role',
-        roleId: 'role_developer',
-      },
-      {
-        id: 'skill_reviewer_verdict',
-        name: 'Give a verdict',
-        instructions:
-          'Say approve, approve with notes, or send back, and say why.',
-        scope: 'role',
-        roleId: 'role_reviewer',
+          'Скажи: принять, принять с замечаниями или вернуть, и почему.',
+        scope: 'agent',
+        agentId: 'agent_reviewer',
       },
     ],
-    stages: [
+    workflows: [
       {
-        id: 'stage_analyst',
-        roleId: 'role_analyst',
-        handoffInstruction:
-          'Pass the problem, the assumptions, and the success criteria. Leave the design open.',
-      },
-      {
-        id: 'stage_architect',
-        roleId: 'role_architect',
-        handoffInstruction:
-          'Pass the approach and the parts to build. Leave the implementation detail to the developer.',
-      },
-      {
-        id: 'stage_developer',
-        roleId: 'role_developer',
-        handoffInstruction:
-          'Pass the changes, the risks, and how to tell the work is done.',
-      },
-      {
-        id: 'stage_reviewer',
-        roleId: 'role_reviewer',
-        handoffInstruction: '',
+        id: 'workflow_supervised',
+        name: 'Сборка с проверкой',
+        description:
+          'План и сборка идут сами. Проверка ждёт подтверждения владельца.',
+        steps: [
+          {
+            id: 'step_plan',
+            agentId: 'agent_planner',
+            title: 'План',
+            mode: 'automatic',
+            handoff:
+              'Передай проблему, допущения и критерии готовности. Способ реализации не выбирай.',
+          },
+          {
+            id: 'step_build',
+            agentId: 'agent_builder',
+            title: 'Сборка',
+            mode: 'automatic',
+            handoff:
+              'Передай, что меняется, где риск и как проверить результат.',
+          },
+          {
+            id: 'step_review',
+            agentId: 'agent_reviewer',
+            title: 'Проверка',
+            mode: 'approval',
+            handoff: '',
+          },
+        ],
       },
     ],
     runs: [],
+    cursorToken: null,
   };
 }
 
@@ -228,184 +245,217 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function readString(value: unknown, label: string): string {
-  if (typeof value !== 'string') {
-    throw new Error(`State file has an invalid ${label}.`);
-  }
+function fail(label: string): never {
+  throw new Error(`Состояние: ${label}`);
+}
+
+function text(value: unknown, label: string): string {
+  if (typeof value !== 'string') fail(label);
   return value;
 }
 
-function parseRole(value: unknown): Role {
-  if (!isRecord(value)) throw new Error('State file has an invalid role.');
+function agentKind(value: unknown): AgentKind {
+  if (
+    value === 'planner' ||
+    value === 'builder' ||
+    value === 'reviewer' ||
+    value === 'custom'
+  ) {
+    return value;
+  }
+  return fail('тип агента');
+}
+
+function harness(value: unknown): Harness {
+  if (value === 'simulated' || value === 'cursor') return value;
+  return fail('среда агента');
+}
+
+function stepMode(value: unknown): StepMode {
+  if (value === 'automatic' || value === 'approval') return value;
+  return fail('режим шага');
+}
+
+function skillScope(value: unknown): SkillScope {
+  if (value === 'shared' || value === 'agent') return value;
+  return fail('область навыка');
+}
+
+function parseAgent(value: unknown): Agent {
+  if (!isRecord(value)) fail('агент');
   return {
-    id: readString(value.id, 'role id'),
-    name: readString(value.name, 'role name'),
-    systemPrompt: readString(value.systemPrompt, 'system prompt'),
+    id: text(value.id, 'id агента'),
+    name: text(value.name, 'имя агента'),
+    kind: agentKind(value.kind),
+    instructions: text(value.instructions, 'инструкции'),
+    harness: harness(value.harness),
   };
 }
 
 function parseSkill(value: unknown): Skill {
-  if (!isRecord(value)) throw new Error('State file has an invalid skill.');
-  const scope = value.scope;
-  if (scope !== 'shared' && scope !== 'role') {
-    throw new Error('State file has an invalid skill scope.');
-  }
-  const roleId = value.roleId;
-  if (roleId !== null && typeof roleId !== 'string') {
-    throw new Error('State file has an invalid skill role.');
-  }
+  if (!isRecord(value)) fail('навык');
+  const agentId = value.agentId;
+  if (agentId !== null && typeof agentId !== 'string') fail('агент навыка');
   return {
-    id: readString(value.id, 'skill id'),
-    name: readString(value.name, 'skill name'),
-    instructions: readString(value.instructions, 'skill instructions'),
-    scope,
-    roleId,
+    id: text(value.id, 'id навыка'),
+    name: text(value.name, 'имя навыка'),
+    instructions: text(value.instructions, 'инструкции навыка'),
+    scope: skillScope(value.scope),
+    agentId,
   };
 }
 
-function parseStage(value: unknown): PipelineStage {
-  if (!isRecord(value)) throw new Error('State file has an invalid stage.');
+function parseStep(value: unknown): WorkflowStep {
+  if (!isRecord(value)) fail('шаг');
   return {
-    id: readString(value.id, 'stage id'),
-    roleId: readString(value.roleId, 'stage role'),
-    handoffInstruction: readString(value.handoffInstruction, 'handoff'),
+    id: text(value.id, 'id шага'),
+    agentId: text(value.agentId, 'агент шага'),
+    title: text(value.title, 'название шага'),
+    mode: stepMode(value.mode),
+    handoff: text(value.handoff, 'передача'),
   };
 }
 
-function parseAgentSkill(value: unknown): AgentSkill {
-  if (!isRecord(value)) throw new Error('State file has an invalid run skill.');
-  const scope = value.scope;
-  if (scope !== 'shared' && scope !== 'role') {
-    throw new Error('State file has an invalid run skill.');
-  }
+function parseWorkflow(value: unknown): Workflow {
+  if (!isRecord(value) || !Array.isArray(value.steps)) fail('процесс');
   return {
-    name: readString(value.name, 'run skill name'),
-    instructions: readString(value.instructions, 'run skill instructions'),
-    scope,
+    id: text(value.id, 'id процесса'),
+    name: text(value.name, 'имя процесса'),
+    description: text(value.description, 'описание процесса'),
+    steps: value.steps.map(parseStep),
   };
 }
 
-function parseSnapshot(value: unknown): RunStageSnapshot {
-  if (!isRecord(value) || !Array.isArray(value.skills)) {
-    throw new Error('State file has an invalid run stage.');
-  }
+function parseSnapshotSkill(value: unknown): AgentSkillSnapshot {
+  if (!isRecord(value)) fail('навык запуска');
   return {
-    stageId: readString(value.stageId, 'run stage id'),
-    roleId: readString(value.roleId, 'run stage role'),
-    roleName: readString(value.roleName, 'run stage name'),
-    systemPrompt: readString(value.systemPrompt, 'run stage prompt'),
-    handoffInstruction: readString(value.handoffInstruction, 'run handoff'),
-    skills: value.skills.map(parseAgentSkill),
+    name: text(value.name, 'имя навыка запуска'),
+    instructions: text(value.instructions, 'инструкции навыка запуска'),
+    scope: skillScope(value.scope),
   };
 }
 
-function parseWork(value: unknown): StageWork {
-  if (!isRecord(value)) throw new Error('State file has invalid stage work.');
+function parseRunStep(value: unknown): RunStep {
+  if (!isRecord(value) || !Array.isArray(value.skills)) fail('шаг запуска');
   return {
-    stageId: readString(value.stageId, 'work stage'),
-    roleId: readString(value.roleId, 'work role'),
-    roleName: readString(value.roleName, 'work role name'),
-    output: readString(value.output, 'work output'),
-    summary: readString(value.summary, 'work summary'),
-    startedAt: readString(value.startedAt, 'work start'),
-    finishedAt: readString(value.finishedAt, 'work finish'),
+    stepId: text(value.stepId, 'id шага запуска'),
+    agentId: text(value.agentId, 'агент запуска'),
+    agentName: text(value.agentName, 'имя агента запуска'),
+    title: text(value.title, 'название шага запуска'),
+    mode: stepMode(value.mode),
+    handoff: text(value.handoff, 'передача запуска'),
+    instructions: text(value.instructions, 'инструкции запуска'),
+    harness: harness(value.harness),
+    skills: value.skills.map(parseSnapshotSkill),
+  };
+}
+
+function parseWork(value: unknown): StepWork {
+  if (!isRecord(value)) fail('результат шага');
+  return {
+    stepId: text(value.stepId, 'шаг результата'),
+    agentId: text(value.agentId, 'агент результата'),
+    agentName: text(value.agentName, 'имя результата'),
+    title: text(value.title, 'название результата'),
+    output: text(value.output, 'текст результата'),
+    summary: text(value.summary, 'сводка'),
+    startedAt: text(value.startedAt, 'начало'),
+    finishedAt: text(value.finishedAt, 'конец'),
   };
 }
 
 function parseEvent(value: unknown): RunEvent {
-  if (!isRecord(value)) throw new Error('State file has an invalid run event.');
+  if (!isRecord(value)) fail('событие');
   const kind = value.kind;
   if (
-    kind !== 'started' &&
-    kind !== 'stage_started' &&
+    kind !== 'progress' &&
     kind !== 'handoff' &&
-    kind !== 'completed' &&
-    kind !== 'failed'
+    kind !== 'approval' &&
+    kind !== 'error' &&
+    kind !== 'done'
   ) {
-    throw new Error('State file has an invalid run event.');
+    fail('вид события');
   }
-  const stageIndex = value.stageIndex;
-  if (stageIndex !== null && typeof stageIndex !== 'number') {
-    throw new Error('State file has an invalid run event.');
-  }
-  const roleId = value.roleId;
-  if (roleId !== null && typeof roleId !== 'string') {
-    throw new Error('State file has an invalid run event.');
-  }
+  const stepIndex = value.stepIndex;
+  if (stepIndex !== null && typeof stepIndex !== 'number')
+    fail('индекс события');
   return {
-    id: readString(value.id, 'event id'),
-    at: readString(value.at, 'event time'),
+    id: text(value.id, 'id события'),
+    at: text(value.at, 'время события'),
     kind,
-    message: readString(value.message, 'event message'),
-    stageIndex,
-    roleId,
+    message: text(value.message, 'текст события'),
+    stepIndex,
   };
 }
 
 function parseRun(value: unknown): Run {
   if (
     !isRecord(value) ||
-    !Array.isArray(value.stages) ||
+    !Array.isArray(value.steps) ||
     !Array.isArray(value.work) ||
     !Array.isArray(value.events)
   ) {
-    throw new Error('State file has an invalid run.');
+    fail('запуск');
   }
   const status = value.status;
-  if (status !== 'running' && status !== 'completed' && status !== 'failed') {
-    throw new Error('State file has an invalid run status.');
+  if (
+    status !== 'running' &&
+    status !== 'waiting_approval' &&
+    status !== 'completed' &&
+    status !== 'failed'
+  ) {
+    fail('статус запуска');
   }
-  const stageIndex = value.stageIndex;
-  if (stageIndex !== null && typeof stageIndex !== 'number') {
-    throw new Error('State file has an invalid stage index.');
-  }
-  const ownerRoleId = value.ownerRoleId;
-  const ownerName = value.ownerName;
+  const stepIndex = value.stepIndex;
+  if (stepIndex !== null && typeof stepIndex !== 'number') fail('текущий шаг');
   const finalResult = value.finalResult;
   const error = value.error;
-  if (ownerRoleId !== null && typeof ownerRoleId !== 'string') {
-    throw new Error('State file has an invalid owner.');
-  }
-  if (ownerName !== null && typeof ownerName !== 'string') {
-    throw new Error('State file has an invalid owner.');
-  }
-  if (finalResult !== null && typeof finalResult !== 'string') {
-    throw new Error('State file has an invalid final result.');
-  }
-  if (error !== null && typeof error !== 'string') {
-    throw new Error('State file has an invalid run error.');
-  }
+  const finishedAt = value.finishedAt;
+  if (finalResult !== null && typeof finalResult !== 'string') fail('итог');
+  if (error !== null && typeof error !== 'string') fail('ошибка запуска');
+  if (finishedAt !== null && typeof finishedAt !== 'string')
+    fail('время окончания');
   return {
-    id: readString(value.id, 'run id'),
-    task: readString(value.task, 'run task'),
+    id: text(value.id, 'id запуска'),
+    workflowId: text(value.workflowId, 'процесс запуска'),
+    workflowName: text(value.workflowName, 'имя процесса запуска'),
+    task: text(value.task, 'задача'),
     status,
-    stageIndex,
-    ownerRoleId,
-    ownerName,
-    stages: value.stages.map(parseSnapshot),
+    stepIndex,
+    steps: value.steps.map(parseRunStep),
     work: value.work.map(parseWork),
     events: value.events.map(parseEvent),
     finalResult,
     error,
-    createdAt: readString(value.createdAt, 'run created time'),
-    updatedAt: readString(value.updatedAt, 'run updated time'),
+    createdAt: text(value.createdAt, 'создание запуска'),
+    updatedAt: text(value.updatedAt, 'обновление запуска'),
+    finishedAt,
   };
 }
 
 export function parseState(value: unknown): State {
   if (
     !isRecord(value) ||
-    !Array.isArray(value.roles) ||
+    !Array.isArray(value.agents) ||
     !Array.isArray(value.skills) ||
-    !Array.isArray(value.stages) ||
+    !Array.isArray(value.workflows) ||
     !Array.isArray(value.runs)
   ) {
-    throw new Error('State file is not a pipeline store.');
+    fail('файл');
   }
+  const cursorToken = value.cursorToken;
+  if (cursorToken !== null && typeof cursorToken !== 'string') fail('токен');
   return {
-    roles: value.roles.map(parseRole),
+    agents: value.agents.map(parseAgent),
     skills: value.skills.map(parseSkill),
-    stages: value.stages.map(parseStage),
+    workflows: value.workflows.map(parseWorkflow),
     runs: value.runs.map(parseRun),
+    cursorToken,
   };
+}
+
+/** Последние 4 символа. Полный токен наружу не отдаём. */
+export function tokenHint(token: string): string | null {
+  if (token.length < 8) return null;
+  return `••••${token.slice(-4)}`;
 }

@@ -1,14 +1,10 @@
 import { Module } from '@nestjs/common';
-import { AGENT_RUNTIME } from './agent-runtime';
-import { createRuntime } from './create-runtime';
+import { AgentsController } from './agents.controller';
+import { AgentsService } from './agents.service';
 
 @Module({
-  providers: [
-    {
-      provide: AGENT_RUNTIME,
-      useFactory: () => createRuntime(process.env),
-    },
-  ],
-  exports: [AGENT_RUNTIME],
+  controllers: [AgentsController],
+  providers: [AgentsService],
+  exports: [AgentsService],
 })
 export class AgentsModule {}

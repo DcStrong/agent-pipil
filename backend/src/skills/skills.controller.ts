@@ -13,7 +13,7 @@ import { SkillsService } from './skills.service';
 
 function asRecord(body: unknown): Record<string, unknown> {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-    throw new BadRequestException('Expected a JSON object.');
+    throw new BadRequestException('Ожидался JSON-объект.');
   }
   return body as Record<string, unknown>;
 }
@@ -29,26 +29,24 @@ export class SkillsController {
 
   @Post()
   create(@Body() body: unknown): Skill {
-    const record = asRecord(body);
-    const parsed = this.parse(record);
+    const parsed = this.parse(asRecord(body));
     return this.skills.create(
       parsed.name,
       parsed.instructions,
       parsed.scope,
-      parsed.roleId,
+      parsed.agentId,
     );
   }
 
   @Put(':id')
   update(@Param('id') id: string, @Body() body: unknown): Skill {
-    const record = asRecord(body);
-    const parsed = this.parse(record);
+    const parsed = this.parse(asRecord(body));
     return this.skills.update(
       id,
       parsed.name,
       parsed.instructions,
       parsed.scope,
-      parsed.roleId,
+      parsed.agentId,
     );
   }
 
@@ -62,26 +60,29 @@ export class SkillsController {
     name: string;
     instructions: string;
     scope: SkillScope;
-    roleId: string | null;
+    agentId: string | null;
   } {
-    if (typeof body.name !== 'string') {
-      throw new BadRequestException('name is required.');
-    }
+    if (typeof body.name !== 'string')
+      throw new BadRequestException('Нужно имя навыка.');
     if (typeof body.instructions !== 'string') {
-      throw new BadRequestException('instructions is required.');
+      throw new BadRequestException('Нужны инструкции навыка.');
     }
-    if (body.scope !== 'shared' && body.scope !== 'role') {
-      throw new BadRequestException('scope must be shared or role.');
+    if (body.scope !== 'shared' && body.scope !== 'agent') {
+      throw new BadRequestException('Область навыка: shared или agent.');
     }
-    const roleId = body.roleId;
-    if (roleId !== undefined && roleId !== null && typeof roleId !== 'string') {
-      throw new BadRequestException('roleId must be a string or null.');
+    const agentId = body.agentId;
+    if (
+      agentId !== undefined &&
+      agentId !== null &&
+      typeof agentId !== 'string'
+    ) {
+      throw new BadRequestException('agentId должен быть строкой или null.');
     }
     return {
       name: body.name,
       instructions: body.instructions,
       scope: body.scope,
-      roleId: typeof roleId === 'string' ? roleId : null,
+      agentId: typeof agentId === 'string' ? agentId : null,
     };
   }
 }

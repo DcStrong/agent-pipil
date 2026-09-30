@@ -1,49 +1,54 @@
-import { useEffect, useState } from 'react'
-import { api } from './api'
-import { Shell } from './components/Shell'
-import { BoardPage } from './pages/BoardPage'
-import { PipelinePage } from './pages/PipelinePage'
-import { RolesPage } from './pages/RolesPage'
-import { SkillsPage } from './pages/SkillsPage'
-import { useView } from './route'
-import type { AgentMode } from './types'
+/** Оболочка: тёмная рейка и экраны процессов, холста, запусков и агентов. */
+import { useEffect } from 'react'
+import { Rail } from './components/Rail'
+import { LiveProvider } from './live'
+import { AgentPage } from './pages/AgentPage'
+import { AgentsPage } from './pages/AgentsPage'
+import { CanvasPage } from './pages/CanvasPage'
+import { RunPage } from './pages/RunPage'
+import { RunsPage } from './pages/RunsPage'
+import { SettingsPage } from './pages/SettingsPage'
+import { WorkflowsPage } from './pages/WorkflowsPage'
+import { useRoute, type Route } from './route'
 
-const titles = {
-  board: 'Board',
-  roles: 'Roles',
-  skills: 'Skills',
-  pipeline: 'Pipeline',
-} as const
+const titles: Record<Route['name'], string> = {
+  workflows: 'Процессы',
+  canvas: 'Холст',
+  runs: 'Запуски',
+  run: 'Запуск',
+  agents: 'Агенты',
+  agent: 'Агент',
+  settings: 'Настройки',
+}
 
 export default function App() {
-  const view = useView()
-  const [agentMode, setAgentMode] = useState<AgentMode | 'offline' | 'loading'>('loading')
+  return (
+    <LiveProvider>
+      <Shell />
+    </LiveProvider>
+  )
+}
+
+function Shell() {
+  const route = useRoute()
+  const flush = route.name === 'canvas' || route.name === 'run'
 
   useEffect(() => {
-    document.title = `Pipil · ${titles[view]}`
-  }, [view])
-
-  useEffect(() => {
-    let cancel = false
-    void api
-      .health()
-      .then((health) => {
-        if (!cancel) setAgentMode(health.agentMode)
-      })
-      .catch(() => {
-        if (!cancel) setAgentMode('offline')
-      })
-    return () => {
-      cancel = true
-    }
-  }, [])
+    document.title = `Пипил · ${titles[route.name]}`
+  }, [route])
 
   return (
-    <Shell view={view} agentMode={agentMode}>
-      {view === 'roles' ? <RolesPage /> : null}
-      {view === 'skills' ? <SkillsPage /> : null}
-      {view === 'pipeline' ? <PipelinePage /> : null}
-      {view === 'board' ? <BoardPage /> : null}
-    </Shell>
+    <div className="app">
+      <Rail route={route} />
+      <main className={flush ? 'workspace flush' : 'workspace'}>
+        {route.name === 'workflows' ? <WorkflowsPage /> : null}
+        {route.name === 'canvas' ? <CanvasPage workflowId={route.workflowId} /> : null}
+        {route.name === 'runs' ? <RunsPage /> : null}
+        {route.name === 'run' ? <RunPage runId={route.runId} /> : null}
+        {route.name === 'agents' ? <AgentsPage /> : null}
+        {route.name === 'agent' ? <AgentPage agentId={route.agentId} /> : null}
+        {route.name === 'settings' ? <SettingsPage /> : null}
+      </main>
+    </div>
   )
 }

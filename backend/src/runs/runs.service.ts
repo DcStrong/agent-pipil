@@ -6,8 +6,10 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { Observable, Subject } from 'rxjs';
-import type { Run, RunStageSnapshot } from '../domain';
-import { PipelineRunner, readDelayMs } from '../pipeline/pipeline-runner';
+import type { Run, RunStep } from '../domain';
+import { CursorClient } from '../runtime/cursor-client';
+import { Orchestrator, readDelayMs } from '../runtime/orchestrator';
+import { SettingsService } from '../settings/settings.service';
 import { StoreService } from '../store/store.service';
 
 export type StreamMessage = { type: 'run'; run: Run } | { type: 'idle' };
@@ -15,10 +17,12 @@ export type StreamMessage = { type: 'run'; run: Run } | { type: 'idle' };
 @Injectable()
 export class RunsService {
   private readonly updates = new Subject<StreamMessage>();
+  private readonly orchestrator = new Orchestrator();
+  private readonly cursor = new CursorClient();
 
   constructor(
     private readonly store: StoreService,
-    private readonly runner: PipelineRunner,
+    private readonly settings: SettingsService,
   ) {}
 
   list(): Run[] {
@@ -27,7 +31,7 @@ export class RunsService {
 
   get(id: string): Run {
     const run = this.store.getRun(id);
-    if (!run) throw new NotFoundException('Run not found.');
+    if (!run) throw new NotFoundException('Запуск не найден.');
     return run;
   }
 
@@ -37,84 +41,102 @@ export class RunsService {
       subscriber.next(
         current ? { type: 'run', run: current } : { type: 'idle' },
       );
-      const subscription = this.updates.subscribe((event) => {
-        subscriber.next(event);
-      });
+      const subscription = this.updates.subscribe((event) =>
+        subscriber.next(event),
+      );
       return () => subscription.unsubscribe();
     });
   }
 
-  start(task: string): Run {
+  start(workflowId: string, task: string): Run {
     const trimmed = task.trim();
-    if (!trimmed) {
-      throw new BadRequestException('Write a task before sending it.');
+    if (!trimmed) throw new BadRequestException('Сначала напишите задачу.');
+    if (trimmed.length > 4000)
+      throw new BadRequestException('Задача короче 4000 символов.');
+    if (this.store.hasActiveRun()) {
+      throw new ConflictException('Сейчас уже идёт один запуск.');
     }
-    if (trimmed.length > 4000) {
-      throw new BadRequestException('Keep the task under 4000 characters.');
-    }
-    if (this.store.hasRunningRun()) {
-      throw new ConflictException(
-        'A task is already moving through the pipeline.',
-      );
-    }
-    const stages = this.snapshot();
+    const steps = this.snapshot(workflowId);
+    const workflow = this.store
+      .read()
+      .workflows.find((item) => item.id === workflowId);
     const now = new Date().toISOString();
     const run: Run = {
       id: randomUUID(),
+      workflowId,
+      workflowName: workflow?.name ?? 'Процесс',
       task: trimmed,
       status: 'running',
-      stageIndex: null,
-      ownerRoleId: null,
-      ownerName: null,
-      stages,
+      stepIndex: null,
+      steps,
       work: [],
       events: [
         {
           id: randomUUID(),
           at: now,
-          kind: 'started',
-          message: 'The task entered the pipeline.',
-          stageIndex: null,
-          roleId: null,
+          kind: 'progress',
+          message: 'Задача вошла в процесс.',
+          stepIndex: null,
         },
       ],
       finalResult: null,
       error: null,
       createdAt: now,
       updatedAt: now,
+      finishedAt: null,
     };
     this.store.upsertRun(run);
-    void this.runner.execute(
-      run,
-      (snapshot) => {
-        this.store.upsertRun(snapshot);
-        this.updates.next({ type: 'run', run: snapshot });
-      },
-      readDelayMs(),
-    );
+    const cursorConnected = this.settings.hasToken();
+    const live = this.cursor.liveEnabled();
+    void this.orchestrator
+      .execute(
+        run,
+        (snapshot) => {
+          this.store.upsertRun(snapshot);
+          this.updates.next({ type: 'run', run: snapshot });
+        },
+        { delayMs: readDelayMs(), cursorConnected, live },
+      )
+      .catch(() => undefined);
     return this.store.getRun(run.id) ?? run;
   }
 
-  private snapshot(): RunStageSnapshot[] {
+  decide(id: string, approved: boolean): Run {
+    const current = this.get(id);
+    if (current.status !== 'waiting_approval') {
+      throw new BadRequestException('Этот запуск не ждёт подтверждения.');
+    }
+    const accepted = this.orchestrator.decide(id, approved);
+    if (!accepted) {
+      throw new BadRequestException('Подтверждение уже некому передать.');
+    }
+    return this.get(id);
+  }
+
+  private snapshot(workflowId: string): RunStep[] {
     const state = this.store.read();
-    if (state.stages.length === 0) {
-      throw new BadRequestException('Add at least one stage to the pipeline.');
+    const workflow = state.workflows.find((item) => item.id === workflowId);
+    if (!workflow) throw new NotFoundException('Процесс не найден.');
+    if (workflow.steps.length === 0) {
+      throw new BadRequestException('В процессе нет шагов.');
     }
     const shared = state.skills.filter((skill) => skill.scope === 'shared');
-    return state.stages.map((stage) => {
-      const role = state.roles.find((item) => item.id === stage.roleId);
-      if (!role) {
-        throw new BadRequestException('The pipeline points at a missing role.');
-      }
+    return workflow.steps.map((step) => {
+      const agent = state.agents.find((item) => item.id === step.agentId);
+      if (!agent)
+        throw new BadRequestException('Шаг ссылается на удалённого агента.');
       const own = state.skills.filter(
-        (skill) => skill.scope === 'role' && skill.roleId === role.id,
+        (skill) => skill.scope === 'agent' && skill.agentId === agent.id,
       );
       return {
-        stageId: stage.id,
-        roleId: role.id,
-        roleName: role.name,
-        systemPrompt: role.systemPrompt,
-        handoffInstruction: stage.handoffInstruction,
+        stepId: step.id,
+        agentId: agent.id,
+        agentName: agent.name,
+        title: step.title,
+        mode: step.mode,
+        handoff: step.handoff,
+        instructions: agent.instructions,
+        harness: agent.harness,
         skills: [...shared, ...own].map((skill) => ({
           name: skill.name,
           instructions: skill.instructions,

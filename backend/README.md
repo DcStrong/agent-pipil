@@ -1,5 +1,5 @@
 # Backend
 
-NestJS API for roles, skills, the pipeline, and live run state.
+API на NestJS: агенты, навыки, процессы, запуски и токен Cursor.
 
-See the repository README for how to run the frontend and the backend.
+Токен не возвращается в браузер целиком. Пока `CURSOR_LIVE` не включён, шаги имитируются и клиент Cursor не ходит в сеть. Как запускать оба приложения — в README корня.

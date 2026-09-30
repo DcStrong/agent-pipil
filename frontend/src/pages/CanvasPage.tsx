@@ -1,0 +1,384 @@
+/** Вертикальный холст: задача подсвечивает текущий шаг и может ждать подтверждения. */
+import { LayoutGroup, motion } from 'motion/react'
+import { useEffect, useState } from 'react'
+import { api, messageOf } from '../api'
+import { finalText, statusLabel, taskTitle } from '../format'
+import { useLive } from '../live'
+import { href } from '../route'
+import type { StepMode, Workflow, WorkflowStep } from '../types'
+
+export function CanvasPage({ workflowId }: { workflowId: string }) {
+  const { ready, workflows, agents, runs, reload, upsertRun } = useLive()
+  const workflow = workflows.find((item) => item.id === workflowId)
+  const [draft, setDraft] = useState<Workflow | null>(null)
+  const [selected, setSelected] = useState<string | null>(null)
+  const [task, setTask] = useState('Добавить экспорт в webp')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const signature = workflow
+    ? JSON.stringify({
+        id: workflow.id,
+        name: workflow.name,
+        description: workflow.description,
+        steps: workflow.steps,
+      })
+    : ''
+
+  useEffect(() => {
+    if (!workflow) return
+    setDraft(structuredClone(workflow))
+    setSelected((current) => current ?? workflow.steps[0]?.id ?? null)
+  }, [signature])
+
+  const live = runs.find(
+    (run) => run.workflowId === workflowId && (run.status === 'running' || run.status === 'waiting_approval'),
+  )
+  const latest = runs.find((run) => run.workflowId === workflowId)
+  const shown = live ?? latest ?? null
+  const locked = Boolean(live)
+
+  if (!ready || (workflow && !draft)) {
+    return (
+      <div className="page">
+        <p className="muted">Загрузка…</p>
+      </div>
+    )
+  }
+
+  if (!workflow || !draft) {
+    return (
+      <div className="page">
+        <p className="muted">Процесс не найден.</p>
+        <a href={href({ name: 'workflows' })}>К процессам</a>
+      </div>
+    )
+  }
+
+  const steps = draft.steps
+  const selectedStep = steps.find((step) => step.id === selected) ?? steps[0]
+
+  function patchStep(id: string, patch: Partial<WorkflowStep>) {
+    setDraft((current) => {
+      if (!current) return current
+      return {
+        ...current,
+        steps: current.steps.map((step) => (step.id === id ? { ...step, ...patch } : step)),
+      }
+    })
+  }
+
+  function move(index: number, direction: -1 | 1) {
+    setDraft((current) => {
+      if (!current) return current
+      const target = index + direction
+      if (target < 0 || target >= current.steps.length) return current
+      const next = current.steps.slice()
+      const [item] = next.splice(index, 1)
+      next.splice(target, 0, item)
+      return { ...current, steps: fillHandoffs(next) }
+    })
+  }
+
+  async function save() {
+    setBusy(true)
+    setError(null)
+    try {
+      await api.saveWorkflow(draft.id, {
+        name: draft.name,
+        description: draft.description,
+        steps: fillHandoffs(draft.steps),
+      })
+      await reload()
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function start() {
+    setBusy(true)
+    setError(null)
+    try {
+      const run = await api.startRun(workflowId, task)
+      upsertRun(run)
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function decide(decision: 'approve' | 'reject') {
+    if (!live) return
+    setBusy(true)
+    setError(null)
+    try {
+      upsertRun(await api.decide(live.id, decision))
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const activeStepId =
+    live && live.stepIndex !== null ? live.steps[live.stepIndex]?.stepId ?? null : null
+
+  return (
+    <div className="canvas-page">
+      <div className="stage">
+        <div className="stage-inner">
+          <a className="crumb" href={href({ name: 'workflows' })}>
+            Процессы
+          </a>
+          <LayoutGroup>
+            <div className="flow" data-testid="canvas">
+              {shown ? (
+                <>
+                  <div className="flow-row">
+                    <div className="node task-pill">
+                      <span className="node-title">{taskTitle(shown.task)}</span>
+                      <span className="chev">›</span>
+                    </div>
+                    <div className="badge-slot" />
+                  </div>
+                  <div className="link-row">
+                    <i />
+                  </div>
+                </>
+              ) : null}
+              {steps.map((step, index) => {
+                const active = activeStepId === step.id
+                const done = Boolean(shown?.work.some((item) => item.stepId === step.id) && !active)
+                return (
+                  <div key={step.id}>
+                    <div className="flow-row">
+                      <button
+                        type="button"
+                        className={[
+                          'node',
+                          active ? 'is-active' : '',
+                          done ? 'is-done' : '',
+                          selectedStep?.id === step.id ? 'is-selected' : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' ')}
+                        onClick={() => setSelected(step.id)}
+                        data-testid={active ? 'active-step' : `step-${step.id}`}
+                      >
+                        <StepMark index={index} />
+                        <span className="node-title">{step.title}</span>
+                        {step.mode === 'approval' ? <span className="mode-chip">проверка</span> : null}
+                        <span className="chev">›</span>
+                      </button>
+                      <div className="badge-slot">
+                        {active && live ? (
+                          <motion.span
+                            layoutId="live-badge"
+                            className={live.status === 'waiting_approval' ? 'badge wait' : 'badge'}
+                          >
+                            {live.status === 'waiting_approval' ? 'Ждёт подтверждения' : 'Выполняется'}
+                          </motion.span>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="link-row">
+                      <i />
+                    </div>
+                  </div>
+                )
+              })}
+              {live ? (
+                <div className="flow-row">
+                  <div className="node status-pill">
+                    <span className="spark" aria-hidden="true">
+                      ✦
+                    </span>
+                    {statusLabel(live.status)}
+                  </div>
+                  <div className="badge-slot" />
+                </div>
+              ) : null}
+            </div>
+          </LayoutGroup>
+        </div>
+      </div>
+      <aside className="side">
+        <label className="field">
+          <span>Процесс</span>
+          <input
+            value={draft.name}
+            disabled={locked}
+            onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+          />
+        </label>
+        <label className="field">
+          <span>Описание</span>
+          <textarea
+            value={draft.description}
+            disabled={locked}
+            onChange={(event) => setDraft({ ...draft, description: event.target.value })}
+          />
+        </label>
+        <label className="field">
+          <span>Задача</span>
+          <textarea data-testid="task-input" value={task} onChange={(event) => setTask(event.target.value)} />
+        </label>
+        <button type="button" className="primary wide" data-testid="start-run" disabled={busy || locked || !task.trim()} onClick={() => void start()}>
+          Запустить
+        </button>
+        {live ? (
+          <p className="now" data-testid="run-status">
+            Сейчас: {live.steps[live.stepIndex ?? 0]?.title ?? '—'} · {statusLabel(live.status)}
+          </p>
+        ) : null}
+        {live?.status === 'waiting_approval' ? (
+          <div className="decision">
+            <p>Шаг ждёт вашего подтверждения. Пока вы не решите, задача не идёт дальше.</p>
+            <div className="row-actions">
+              <button type="button" className="primary" data-testid="approve" disabled={busy} onClick={() => void decide('approve')}>
+                Одобрить
+              </button>
+              <button type="button" data-testid="reject" disabled={busy} onClick={() => void decide('reject')}>
+                Отклонить
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {shown?.status === 'completed' && shown.finalResult ? (
+          <article className="result" data-testid="final-result">
+            <h2>Итог</h2>
+            <p>{finalText(shown.finalResult)}</p>
+          </article>
+        ) : null}
+        {shown?.status === 'failed' && shown.error ? <p className="error-line">{shown.error}</p> : null}
+        {error ? <p className="error-line">{error}</p> : null}
+        {selectedStep ? (
+          <section className="editor">
+            <h2>Шаг</h2>
+            <label className="field">
+              <span>Название</span>
+              <input
+                value={selectedStep.title}
+                disabled={locked}
+                onChange={(event) => patchStep(selectedStep.id, { title: event.target.value })}
+              />
+            </label>
+            <label className="field">
+              <span>Агент</span>
+              <select
+                value={selectedStep.agentId}
+                disabled={locked}
+                onChange={(event) => patchStep(selectedStep.id, { agentId: event.target.value })}
+              >
+                {agents.map((agent) => (
+                  <option key={agent.id} value={agent.id}>
+                    {agent.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>Режим</span>
+              <select
+                value={selectedStep.mode}
+                disabled={locked}
+                onChange={(event) => patchStep(selectedStep.id, { mode: event.target.value as StepMode })}
+              >
+                <option value="automatic">Автоматически</option>
+                <option value="approval">Ждёт подтверждения</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>Передача следующему</span>
+              <textarea
+                value={selectedStep.handoff}
+                disabled={locked}
+                onChange={(event) => patchStep(selectedStep.id, { handoff: event.target.value })}
+              />
+            </label>
+            <div className="row-actions">
+              <button
+                type="button"
+                disabled={locked || steps[0]?.id === selectedStep.id}
+                onClick={() => move(steps.findIndex((step) => step.id === selectedStep.id), -1)}
+              >
+                Выше
+              </button>
+              <button
+                type="button"
+                disabled={locked || steps[steps.length - 1]?.id === selectedStep.id}
+                onClick={() => move(steps.findIndex((step) => step.id === selectedStep.id), 1)}
+              >
+                Ниже
+              </button>
+              <button
+                type="button"
+                disabled={locked || steps.length < 2}
+                onClick={() =>
+                  setDraft({
+                    ...draft,
+                    steps: fillHandoffs(steps.filter((step) => step.id !== selectedStep.id)),
+                  })
+                }
+              >
+                Удалить
+              </button>
+            </div>
+          </section>
+        ) : null}
+        <div className="row-actions">
+          <button
+            type="button"
+            disabled={locked || agents.length === 0}
+            onClick={() =>
+              setDraft({
+                ...draft,
+                steps: fillHandoffs([
+                  ...steps.map((step, index) =>
+                    index === steps.length - 1 && !step.handoff.trim()
+                      ? { ...step, handoff: 'Передай результат следующему шагу.' }
+                      : step,
+                  ),
+                  {
+                    id: crypto.randomUUID(),
+                    agentId: agents[0]?.id ?? '',
+                    title: 'Шаг',
+                    mode: 'automatic',
+                    handoff: '',
+                  },
+                ]),
+              })
+            }
+          >
+            Добавить шаг
+          </button>
+          <button type="button" className="primary" disabled={busy || locked} onClick={() => void save()}>
+            Сохранить процесс
+          </button>
+        </div>
+      </aside>
+    </div>
+  )
+}
+
+function fillHandoffs(steps: WorkflowStep[]): WorkflowStep[] {
+  return steps.map((step, index) => {
+    const last = index === steps.length - 1
+    if (!last && !step.handoff.trim()) {
+      return { ...step, handoff: 'Передай результат следующему шагу.' }
+    }
+    return step
+  })
+}
+
+function StepMark({ index }: { index: number }) {
+  const label = index === 0 ? '✶' : index === 1 ? '{' : '⌕'
+  return (
+    <span className="step-mark" aria-hidden="true">
+      {label}
+    </span>
+  )
+}

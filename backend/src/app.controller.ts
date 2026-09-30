@@ -1,12 +1,12 @@
-import { Controller, Get, Inject } from '@nestjs/common';
-import { AGENT_RUNTIME, type AgentRuntime } from './agents/agent-runtime';
+import { Controller, Get } from '@nestjs/common';
+import { SettingsService } from './settings/settings.service';
 
 @Controller()
 export class AppController {
-  constructor(@Inject(AGENT_RUNTIME) private readonly runtime: AgentRuntime) {}
+  constructor(private readonly settings: SettingsService) {}
 
   @Get('health')
-  health(): { ok: true; agentMode: 'simulated' | 'model' } {
-    return { ok: true, agentMode: this.runtime.mode };
+  health(): { ok: true; cursorConnected: boolean } {
+    return { ok: true, cursorConnected: this.settings.hasToken() };
   }
 }

@@ -1,60 +1,53 @@
-# Pipil
+# Пипил
 
-A local board for one task moving through a pipeline of agents. You edit the roles, the skills, and the handoff order. The task moves from agent to agent while you watch, then the board shows the final result.
+Локальное приложение для процессов из агентов. На холсте виден вертикальный конвейер: задача переходит от шага к шагу. Шаг может идти сам или остановиться и ждать подтверждения владельца.
 
-Agents are simulated, so the demo runs with no API keys.
+Идея оркестратора, шагов агентов, точек проверки и запусков близка к [Paseo](https://github.com/getpaseo/paseo) (Apache-2.0). Код здесь написан отдельно и не копирует исходники Paseo.
 
-## Run
+Интерфейс на русском. Агенты по умолчанию имитируются, ключ для показа не нужен.
 
-Install once from the repository root (Node.js 22):
+## Запуск
+
+Из корня репозитория, Node.js 22:
 
 ```bash
 npm install
-```
-
-Start the frontend and the backend together:
-
-```bash
 npm run dev
 ```
 
-- Frontend: http://localhost:5173
-- Backend: http://localhost:3000/api/health
+- Интерфейс: http://localhost:5173
+- Проверка сервера: http://localhost:3000/api/health
 
-To run them in two terminals:
+По отдельности:
 
 ```bash
 npm run start:backend
 npm run start:frontend
 ```
 
-Open the frontend. Send a task from the board. The card moves from analyst to architect to developer to reviewer, and the final result appears in the side panel when the run finishes.
+Откройте «Процессы», затем карточку «Сборка с проверкой». Введите задачу и нажмите «Запустить». Подсветка идёт по шагам «План» и «Сборка», на «Проверке» процесс ждёт «Одобрить» или «Отклонить».
 
-Roles, skills, the pipeline, and run history are stored in `backend/data/state.json`. Delete that file to restore the seeded board.
+Состояние лежит в `backend/data/state.json`. Удалите файл, чтобы вернуть начальных агентов и процесс.
 
-## What you can edit
+## Что можно настроить
 
-- **Roles.** Analyst, architect, developer, and reviewer are seeded. Each has a name and a system prompt. Add or rename roles on the Roles page.
-- **Skills.** Shared skills are given to every role. Role skills stay with one role. Add either kind on the Skills page.
-- **Pipeline.** Stages run in order. Every stage except the last has a handoff note: the instruction the next role receives.
+- Агенты: имя, тип, инструкции и среда (`Имитация` или `Cursor`).
+- Навыки: общие или у одного агента.
+- Процесс: порядок шагов, какой агент ведёт шаг, режим «Автоматически» или «Ждёт подтверждения», текст передачи следующему.
+- Одновременно идёт один запуск.
 
-Only one task runs at a time.
+## Токен Cursor
 
-## Optional model
+На этом этапе подключение — по API-токену, без OAuth. Токен сохраняется только на сервере:
 
-Leave `MODEL_API_KEY` unset and every role is simulated.
+- переменная `CURSOR_API_TOKEN` в окружении backend;
+- или поле в «Настройках», которое пишет `cursorToken` в `backend/data/state.json`.
 
-To call an OpenAI-compatible chat API instead, set these in the backend environment and restart it:
+Браузер не получает токен целиком. В ответе есть признак подключения и, для сохранённого токена, маска из последних четырёх символов. Если токена нет, приложение открывается, а агент со средой Cursor показан как «Не подключён».
 
-```bash
-MODEL_API_KEY=your-key
-MODEL_BASE_URL=https://api.openai.com/v1
-MODEL_NAME=gpt-4o-mini
-```
+Запуски при разработке имитируются и не вызывают API Cursor. Отдельный клиент в `backend/src/runtime/cursor-client.ts` не делает сетевых запросов. `CURSOR_LIVE=1` только выбирает эту ветку, и она всё равно отказывается от вызова. Пример переменных — в `backend/.env.example`.
 
-`AGENT_MODE=simulated` forces the simulator even when a key is present. `AGENT_MODE=model` requires `MODEL_API_KEY`. See `backend/.env.example`.
-
-## Tests
+## Проверки
 
 ```bash
 npm test
