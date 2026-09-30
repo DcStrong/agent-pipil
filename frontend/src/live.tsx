@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react'
 import { api, mergeRun, messageOf, subscribeRuns } from './api'
+import { isOpenRun } from './format'
 import type { Agent, CursorConnection, Run, Skill, Workflow } from './types'
 
 interface LiveValue {
@@ -81,9 +82,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     }
   }, [reload, upsertRun])
 
-  const active = runs.some(
-    (run) => run.status === 'running' || run.status === 'waiting_approval' || run.status === 'waiting_user',
-  )
+  const active = runs.some((run) => isOpenRun(run.status))
 
   useEffect(() => {
     if (!active) return

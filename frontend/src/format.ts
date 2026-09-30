@@ -4,8 +4,18 @@ export function statusLabel(status: RunStatus): string {
   if (status === 'running') return 'Выполняется'
   if (status === 'waiting_approval') return 'Ждёт подтверждения'
   if (status === 'waiting_user') return 'Ждёт ответа'
+  if (status === 'waiting_plan') return 'Можно править план'
   if (status === 'completed') return 'Готово'
   return 'Ошибка'
+}
+
+export function isOpenRun(status: RunStatus): boolean {
+  return (
+    status === 'running' ||
+    status === 'waiting_approval' ||
+    status === 'waiting_user' ||
+    status === 'waiting_plan'
+  )
 }
 
 export function kindLabel(kind: AgentKind): string {

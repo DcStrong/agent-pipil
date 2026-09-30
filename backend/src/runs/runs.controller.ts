@@ -58,6 +58,7 @@ export class RunsController {
       roleIds?: unknown;
       projectPath?: unknown;
       mapPath?: unknown;
+      deepThinking?: unknown;
     };
     if (typeof record.workflowId !== 'string') {
       throw new BadRequestException('Нужен workflowId.');
@@ -65,20 +66,53 @@ export class RunsController {
     if (typeof record.task !== 'string')
       throw new BadRequestException('Нужна задача.');
     const roleIds = record.roleIds;
-    if (roleIds !== undefined && (!Array.isArray(roleIds) || roleIds.some((id) => typeof id !== 'string'))) {
+    if (
+      roleIds !== undefined &&
+      (!Array.isArray(roleIds) || roleIds.some((id) => typeof id !== 'string'))
+    ) {
       throw new BadRequestException('roleIds должен быть списком id ролей.');
     }
-    if (record.projectPath !== undefined && record.projectPath !== null && typeof record.projectPath !== 'string') {
+    if (
+      record.projectPath !== undefined &&
+      record.projectPath !== null &&
+      typeof record.projectPath !== 'string'
+    ) {
       throw new BadRequestException('Папка проекта должна быть строкой.');
     }
-    if (record.mapPath !== undefined && record.mapPath !== null && typeof record.mapPath !== 'string') {
+    if (
+      record.mapPath !== undefined &&
+      record.mapPath !== null &&
+      typeof record.mapPath !== 'string'
+    ) {
       throw new BadRequestException('Путь карты должен быть строкой.');
+    }
+    if (
+      record.deepThinking !== undefined &&
+      typeof record.deepThinking !== 'boolean'
+    ) {
+      throw new BadRequestException('Глубокое мышление — да или нет.');
     }
     return this.runs.start(record.workflowId, record.task, {
       roleIds: roleIds as string[] | undefined,
-      projectPath: typeof record.projectPath === 'string' ? record.projectPath : null,
+      projectPath:
+        typeof record.projectPath === 'string' ? record.projectPath : null,
       mapPath: typeof record.mapPath === 'string' ? record.mapPath : null,
+      deepThinking: record.deepThinking === true,
     });
+  }
+
+  @Post(':id/plan')
+  savePlan(@Param('id') id: string, @Body() body: unknown): Run {
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      throw new BadRequestException('Ожидался JSON-объект.');
+    }
+    const record = body as {
+      why?: unknown;
+      changes?: unknown;
+      how?: unknown;
+      checklist?: unknown;
+    };
+    return this.runs.savePlan(id, record);
   }
 
   @Post(':id/answer')
@@ -87,7 +121,8 @@ export class RunsController {
       throw new BadRequestException('Ожидался JSON-объект.');
     }
     const text = (body as { text?: unknown }).text;
-    if (typeof text !== 'string') throw new BadRequestException('Нужен текст ответа.');
+    if (typeof text !== 'string')
+      throw new BadRequestException('Нужен текст ответа.');
     return this.runs.answer(id, text);
   }
 

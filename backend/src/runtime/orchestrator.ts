@@ -7,11 +7,24 @@ import type {
   ReturnShape,
   Run,
   RunStep,
+  TaskPlan,
 } from '../domain';
 import { CursorClient, hasLocalCursorSession } from './cursor-client';
 import { writeProjectMap } from './project-folder';
 import { briefLine, roleTurn } from './role-turn';
 import { SimulatedAgent } from './simulated-agent';
+import {
+  archiveResult,
+  buildFromPlan,
+  draftPlan,
+  formatPlan,
+  lookNote,
+  reviewAgainst,
+  taskDirectory,
+  writeTaskArchive,
+  writeTaskPieces,
+  type PieceMode,
+} from './task-order';
 
 export function readDelayMs(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env.SIM_DELAY_MS;
@@ -80,6 +93,7 @@ function contextFor(run: Run, index: number): AgentContext {
 export class Orchestrator {
   private readonly gates = new Map<string, (approved: boolean) => void>();
   private readonly answers = new Map<string, (text: string) => void>();
+  private readonly plans = new Map<string, (plan: TaskPlan) => void>();
   private readonly simulated = new SimulatedAgent();
   private readonly cursor = new CursorClient();
 
@@ -103,11 +117,24 @@ export class Orchestrator {
     return true;
   }
 
+  /** Принимает план, который владелец поправил перед сборкой. */
+  revise(runId: string, plan: TaskPlan): boolean {
+    const resolve = this.plans.get(runId);
+    if (!resolve) return false;
+    this.plans.delete(runId);
+    resolve(plan);
+    return true;
+  }
+
   async execute(
     run: Run,
     publish: (run: Run) => void,
     options: { delayMs?: number; cursorConnected: boolean; live: boolean },
   ): Promise<void> {
+    if (run.deepThinking) {
+      await this.executeDeep(run, publish, options.delayMs ?? readDelayMs());
+      return;
+    }
     const delayMs = options.delayMs ?? readDelayMs();
     const tell = () => publish(structuredClone(run));
     let incoming: HandoffBrief | null = null;
@@ -120,12 +147,25 @@ export class Orchestrator {
           throw new Error('Задача зациклилась между ролями.');
         }
         const step = run.steps[index];
-        incoming = await this.runStep(run, index, incoming, tell, delayMs, options);
+        incoming = await this.runStep(
+          run,
+          index,
+          incoming,
+          tell,
+          delayMs,
+          options,
+        );
         if (run.status === 'failed') return;
-        const sendBack = step.kind === 'tester' && step.brief?.now.startsWith('Разработчику вернуть');
+        const sendBack =
+          step.kind === 'tester' &&
+          step.brief?.now.startsWith('Разработчику вернуть');
         if (sendBack) {
-          const developer = run.steps.findIndex((item) => item.kind === 'developer');
-          const passes = run.work.filter((item) => item.stepId === run.steps[developer]?.stepId).length;
+          const developer = run.steps.findIndex(
+            (item) => item.kind === 'developer',
+          );
+          const passes = run.work.filter(
+            (item) => item.stepId === run.steps[developer]?.stepId,
+          ).length;
           if (developer >= 0 && passes < 2) {
             index = developer;
             continue;
@@ -154,9 +194,11 @@ export class Orchestrator {
       const failedAt = new Date().toISOString();
       this.gates.delete(run.id);
       this.answers.delete(run.id);
+      this.plans.delete(run.id);
       run.status = 'failed';
       run.pendingQuestion = null;
-      run.error = error instanceof Error ? error.message : 'Шаг завершился ошибкой.';
+      run.error =
+        error instanceof Error ? error.message : 'Шаг завершился ошибкой.';
       run.finishedAt = failedAt;
       run.updatedAt = failedAt;
       run.events.push({
@@ -209,13 +251,19 @@ export class Orchestrator {
       await this.cursor.runStep();
     }
 
-    const passes = run.work.filter((item) => item.stepId === step.stepId).length;
+    const passes = run.work.filter(
+      (item) => item.stepId === step.stepId,
+    ).length;
     const first = await this.speak(run, step, index, incoming, null, passes);
     say(step, 'role', first.text);
     step.mapAddition = first.mapAddition;
     if (first.shape !== 'none') run.developerShape = first.shape;
 
-    if (step.mode === 'question' && first.question && step.kind !== 'orchestrator') {
+    if (
+      step.mode === 'question' &&
+      first.question &&
+      step.kind !== 'orchestrator'
+    ) {
       step.question = first.question;
       run.pendingQuestion = first.question;
       run.status = 'waiting_user';
@@ -244,7 +292,14 @@ export class Orchestrator {
         stepIndex: index,
       });
       tell();
-      const second = await this.speak(run, step, index, incoming, answer.trim(), passes);
+      const second = await this.speak(
+        run,
+        step,
+        index,
+        incoming,
+        answer.trim(),
+        passes,
+      );
       say(step, 'role', second.text);
       step.brief = second.handoff;
       step.mapAddition = second.mapAddition ?? step.mapAddition;
@@ -317,7 +372,12 @@ export class Orchestrator {
     };
   }
 
-  private finishWork(run: Run, step: RunStep, started: string, output: string): void {
+  private finishWork(
+    run: Run,
+    step: RunStep,
+    started: string,
+    output: string,
+  ): void {
     const finished = new Date().toISOString();
     run.work.push({
       stepId: step.stepId,
@@ -376,6 +436,208 @@ export class Orchestrator {
     });
     tell();
     return false;
+  }
+
+  /**
+   * Галка включена: заметка, план, сборка по чеклисту, сверка, архив.
+   * Режим шага выбирает, кто пишет кусок. Дерево холста не переставляется.
+   * Cursor здесь не вызывается.
+   */
+  private async executeDeep(
+    run: Run,
+    publish: (run: Run) => void,
+    delayMs: number,
+  ): Promise<void> {
+    const tell = () => publish(structuredClone(run));
+    try {
+      const started = new Date().toISOString();
+      run.status = 'running';
+      run.updatedAt = started;
+      run.events.push({
+        id: randomUUID(),
+        at: started,
+        kind: 'progress',
+        message: 'Глубокое мышление: сначала короткая заметка, затем план.',
+        stepIndex: null,
+      });
+      tell();
+
+      const note = lookNote(run.task, run.project);
+      run.note = note;
+      await this.showPiece(
+        run,
+        'ask',
+        note,
+        'Короткая заметка: что уже есть в проекте.',
+        tell,
+        delayMs,
+      );
+
+      run.plan = draftPlan(run.task);
+      this.persistPieces(run);
+      const planIndex = run.steps.findIndex((step) => step.mode === 'plan');
+      const waitingAt = new Date().toISOString();
+      run.status = 'waiting_plan';
+      run.stepIndex = planIndex >= 0 ? planIndex : null;
+      run.pendingQuestion = null;
+      run.updatedAt = waitingAt;
+      run.events.push({
+        id: randomUUID(),
+        at: waitingAt,
+        kind: 'progress',
+        message: 'План из четырёх частей можно поправить перед сборкой.',
+        stepIndex: run.stepIndex,
+      });
+      tell();
+
+      const edited = await new Promise<TaskPlan>((resolve) => {
+        this.plans.set(run.id, resolve);
+      });
+      run.plan = edited;
+      this.persistPieces(run);
+      const acceptedAt = new Date().toISOString();
+      run.updatedAt = acceptedAt;
+      run.events.push({
+        id: randomUUID(),
+        at: acceptedAt,
+        kind: 'progress',
+        message: 'План принят. Сборка берёт его в контекст.',
+        stepIndex: planIndex >= 0 ? planIndex : null,
+      });
+      await this.showPiece(
+        run,
+        'plan',
+        formatPlan(edited),
+        'План записан в папку задачи.',
+        tell,
+        delayMs,
+      );
+
+      const built = buildFromPlan(edited);
+      run.buildText = built;
+      await this.showPiece(
+        run,
+        'build',
+        built,
+        'Сборка идёт по чеклисту.',
+        tell,
+        delayMs,
+      );
+
+      const review = reviewAgainst(edited, built);
+      run.reviewText = review;
+      await this.showPiece(
+        run,
+        'review',
+        review,
+        'Сверка идёт по чеклисту.',
+        tell,
+        delayMs,
+      );
+
+      const ended = new Date().toISOString();
+      run.archive = {
+        note,
+        plan: edited,
+        result: archiveResult(built, review),
+        at: ended,
+        folder: null,
+      };
+      this.persistArchive(run);
+      this.closeMap(run);
+      run.status = 'completed';
+      run.stepIndex = null;
+      run.pendingQuestion = null;
+      run.finalResult = run.archive.result;
+      run.finishedAt = ended;
+      run.updatedAt = ended;
+      run.events.push({
+        id: randomUUID(),
+        at: ended,
+        kind: 'done',
+        message: 'План и результат лежат в архиве задачи.',
+        stepIndex: null,
+      });
+      tell();
+    } catch (error) {
+      const failedAt = new Date().toISOString();
+      this.gates.delete(run.id);
+      this.answers.delete(run.id);
+      this.plans.delete(run.id);
+      run.status = 'failed';
+      run.pendingQuestion = null;
+      run.error =
+        error instanceof Error ? error.message : 'Шаг завершился ошибкой.';
+      run.finishedAt = failedAt;
+      run.updatedAt = failedAt;
+      run.events.push({
+        id: randomUUID(),
+        at: failedAt,
+        kind: 'error',
+        message: run.error,
+        stepIndex: run.stepIndex,
+      });
+      tell();
+    }
+  }
+
+  /** Пишет один кусок в диалог шага с этим режимом. Соседние реплики в текст не кладёт. */
+  private async showPiece(
+    run: Run,
+    mode: PieceMode,
+    text: string,
+    event: string,
+    tell: () => void,
+    delayMs: number,
+  ): Promise<void> {
+    const index = run.steps.findIndex((step) => step.mode === mode);
+    const step = index >= 0 ? run.steps[index] : undefined;
+    const at = new Date().toISOString();
+    run.status = 'running';
+    run.stepIndex = index >= 0 ? index : null;
+    run.updatedAt = at;
+    run.events.push({
+      id: randomUUID(),
+      at,
+      kind: 'progress',
+      message: step ? `${step.agentName}: ${event}` : event,
+      stepIndex: run.stepIndex,
+    });
+    if (step) {
+      say(step, 'role', text);
+      const finished = new Date().toISOString();
+      run.work.push({
+        stepId: step.stepId,
+        agentId: step.agentId,
+        agentName: step.agentName,
+        title: step.title,
+        output: text,
+        summary: text.slice(0, 180),
+        startedAt: at,
+        finishedAt: finished,
+      });
+    }
+    tell();
+    await sleep(delayMs);
+  }
+
+  private persistPieces(run: Run): void {
+    if (!run.note || !run.plan) return;
+    const dir = taskDirectory(run.project, run.id);
+    run.taskFolder = dir;
+    if (!dir) return;
+    writeTaskPieces(dir, { note: run.note, plan: run.plan });
+  }
+
+  private persistArchive(run: Run): void {
+    if (!run.archive || !run.note || !run.plan) return;
+    const dir = run.taskFolder ?? taskDirectory(run.project, run.id);
+    if (!dir) return;
+    run.archive.folder = writeTaskArchive(dir, {
+      note: run.archive.note,
+      plan: run.archive.plan,
+      result: run.archive.result,
+    });
   }
 
   /** Карту пишет только оркестратор и только если заметки ролей её меняют. */
