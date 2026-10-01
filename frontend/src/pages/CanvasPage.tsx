@@ -9,6 +9,7 @@ import { finalText, isOpenRun, statusLabel, taskTitle } from '../format'
 import { useLive } from '../live'
 import { href } from '../route'
 import { hasCycle, materialize, orderSteps, withHandoffs } from '../step-graph'
+import { v4 as uuidv4 } from 'uuid'
 import type { Agent, AgentKind, Run, StepMode, TaskPlan, Workflow, WorkflowStep } from '../types'
 
 const TASK_ROLES: AgentKind[] = ['orchestrator', 'analyst', 'architect', 'developer', 'tester']
@@ -133,7 +134,7 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
   function place(agent: Agent, how: 'sequence' | 'branch', where: 'selected' | 'tail' = 'selected') {
     if (locked) return
     const base = materialize(steps)
-    const id = crypto.randomUUID()
+    const id = uuidv4()
     const created: WorkflowStep = {
       id,
       agentId: agent.id,
@@ -224,7 +225,7 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
       }))
     let addedId: string | undefined
     for (const agent of missing) {
-      const id = crypto.randomUUID()
+      const id = uuidv4()
       addedId = id
       const created: WorkflowStep = {
         id,

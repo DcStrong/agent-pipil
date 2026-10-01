@@ -159,6 +159,33 @@ describe('Холст: роли, «Следом» и «Ответвить»', () 
     expect(titles()).toEqual(['Сборка', 'Проверка', 'Тестировщик'])
   })
 
+  it('без crypto.randomUUID роли, «Следом» и «Ответвить» меняют дерево', async () => {
+    const saved = globalThis.crypto.randomUUID
+    Reflect.deleteProperty(globalThis.crypto, 'randomUUID')
+    try {
+      await open([])
+      await press(screen.getByTestId('role-tester'))
+      expect(titles()).toEqual(['Сборка', 'Проверка', 'Тестировщик'])
+
+      cleanup()
+      harness.live = null
+      await open([])
+      await press(screen.getByTestId('place-next'))
+      expect(titles()).toEqual(['Сборка', 'Оркестратор', 'Проверка'])
+
+      cleanup()
+      harness.live = null
+      await open([])
+      await press(screen.getByTestId('place-branch'))
+      expect(titles()).toEqual(['Сборка', 'Проверка', 'Оркестратор'])
+    } finally {
+      Object.defineProperty(globalThis.crypto, 'randomUUID', {
+        configurable: true,
+        value: saved,
+      })
+    }
+  })
+
   it('без запуска «Следом» вставляет шаг в цепочку выбранного', async () => {
     await open([])
     await press(screen.getByTestId('place-next'))
