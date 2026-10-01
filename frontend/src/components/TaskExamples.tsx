@@ -1,4 +1,4 @@
-/** Три коротких примера рядом с ролями. Кнопка только заполняет поля и не начинает запуск. */
+/** Три коротких примера рядом с ролями. Кнопка только настраивает цепочку, запуск — с доски. */
 import type { Agent, AgentKind } from '../types'
 
 export type ExampleId = 'feature' | 'refactor' | 'plan'
@@ -7,7 +7,6 @@ interface Example {
   id: ExampleId
   title: string
   text: string
-  task: string
   /** Пустой список значит «флажки ролей не трогать». */
   enable: AgentKind[]
   disable: AgentKind[]
@@ -18,17 +17,16 @@ const EXAMPLES: Example[] = [
   {
     id: 'feature',
     title: 'Новая возможность',
-    text: 'Укажите папку проекта, отметьте роли и нажмите «Запустить». Откройте диалог роли на холсте. Если конвейер ждёт — ответьте на вопрос здесь же. Кнопка подставляет только текст задачи.',
-    task: 'Добавь выгрузку списка заказов в CSV.',
-    enable: [],
-    disable: [],
-    applyLabel: 'Подставить задачу',
+    text: 'Оркестратор, разработчик и тестировщик — типичная цепочка для новой возможности. Задачу создайте на доске и перенесите в работу.',
+    task: '',
+    enable: ['orchestrator', 'developer', 'tester'],
+    disable: ['analyst', 'architect'],
+    applyLabel: 'Подставить роли',
   },
   {
     id: 'refactor',
     title: 'Рефакторинг',
     text: 'Аналитика и архитектора не включайте. Оставьте разработчика. Если нужна проверка — тестировщика или ревьюера; в списке ролей проверка — это тестировщик.',
-    task: 'Переименуй внутренние методы заказа, поведение не меняй.',
     enable: ['developer', 'tester'],
     disable: ['analyst', 'architect'],
     applyLabel: 'Подставить',
@@ -37,7 +35,6 @@ const EXAMPLES: Example[] = [
     id: 'plan',
     title: 'План без кода',
     text: 'Включите оркестратора, аналитика и архитектора. Итог будет планом, не кодом. Разработчика и тестировщика оставьте выключенными.',
-    task: 'Как разделить заказы и оплату? Нужен план, без кода.',
     enable: ['orchestrator', 'analyst', 'architect'],
     disable: ['developer', 'tester'],
     applyLabel: 'Подставить',
@@ -70,7 +67,7 @@ export function TaskExamples({
   agents: Agent[]
   picked: string[]
   active: ExampleId | null
-  onApply: (exampleId: ExampleId, task: string, picked: string[]) => void
+  onApply: (exampleId: ExampleId, picked: string[]) => void
 }) {
   return (
     <div className="examples" data-testid="task-examples">
@@ -83,7 +80,7 @@ export function TaskExamples({
             type="button"
             aria-pressed={active === example.id}
             data-testid={`apply-${example.id}`}
-            onClick={() => onApply(example.id, example.task, pickedForExample(example.id, agents, picked))}
+            onClick={() => onApply(example.id, pickedForExample(example.id, agents, picked))}
           >
             {example.applyLabel}
           </button>

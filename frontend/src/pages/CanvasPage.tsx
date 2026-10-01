@@ -30,10 +30,6 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
   const workflow = workflows.find((item) => item.id === workflowId)
   const [draft, setDraft] = useState<Workflow | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
-  const [task, setTask] = useState('Нужен массив объектов заказов')
-  const [deepThinking, setDeepThinking] = useState(false)
-  const [projectPath, setProjectPath] = useState('')
-  const [mapPath, setMapPath] = useState('')
   const [opened, setOpened] = useState<string | null>(null)
   const [answer, setAnswer] = useState('')
   const [linking, setLinking] = useState(false)
@@ -44,7 +40,7 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
   const [picked, setPicked] = useState('')
   const [presetName, setPresetName] = useState('')
   const [presetNote, setPresetNote] = useState<string | null>(null)
-  /** Какой пример последний подставил текст. На запуск не влияет. */
+  /** Какой пример последний применили к цепочке. */
   const [example, setExample] = useState<ExampleId | null>(null)
 
   const signature = workflow
@@ -168,10 +164,9 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
     )
   }
 
-  /** Пример подставляет текст и флажки ролей. Запуск отсюда не начинается. */
-  function applyExample(exampleId: ExampleId, nextTask: string, nextPicked: string[]) {
+  /** Пример подставляет роли в цепочку. Задачи с доски сюда не запускаются. */
+  function applyExample(exampleId: ExampleId, nextPicked: string[]) {
     setExample(exampleId)
-    setTask(nextTask)
     if (locked) return
     const wanted = new Set(nextPicked)
     const roleIds = new Set(roleAgents.map((agent) => agent.id))
@@ -351,33 +346,6 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
       removePreset(current.id)
       setPicked(presets.find((item) => item.id !== current.id)?.id ?? '')
       setPresetNote(`Пресет «${current.name}» удалён.`)
-    } catch (reason) {
-      setError(messageOf(reason))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function start() {
-    if (!draft) return
-    const source = draft
-    const next = withHandoffs(materialize(source.steps))
-    setBusy(true)
-    setError(null)
-    try {
-      const saved = await api.saveWorkflow(source.id, {
-        name: source.name,
-        description: source.description,
-        steps: next,
-      })
-      upsertWorkflow(saved)
-      const run = await api.startRun(workflowId, task, {
-        projectPath: projectPath.trim(),
-        mapPath: mapPath.trim(),
-        deepThinking,
-      })
-      upsertRun(run)
-      setOpened(run.steps[0]?.stepId ?? null)
     } catch (reason) {
       setError(messageOf(reason))
     } finally {
@@ -620,52 +588,8 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
             </button>
           </div>
         </div>
-        <label className="field">
-          <span>Папка проекта</span>
-          <input
-            data-testid="project-path"
-            value={projectPath}
-            placeholder="Путь к папке"
-            onChange={(event) => setProjectPath(event.target.value)}
-          />
-        </label>
-        <p className="hint" data-testid="folder-hint">
-          Для новой возможности укажите здесь папку проекта.
-        </p>
-        <label className="field">
-          <span>Карта, если уже есть</span>
-          <input
-            data-testid="map-path"
-            value={mapPath}
-            placeholder="Необязательный путь"
-            onChange={(event) => setMapPath(event.target.value)}
-          />
-        </label>
-        <label className="field">
-          <span>Задача</span>
-          <textarea data-testid="task-input" value={task} onChange={(event) => setTask(event.target.value)} />
-        </label>
-        <label className="checkline">
-          <input
-            type="checkbox"
-            data-testid="deep-thinking"
-            checked={deepThinking}
-            disabled={locked}
-            onChange={(event) => setDeepThinking(event.target.checked)}
-          />
-          Глубокое мышление
-        </label>
-        <button
-          type="button"
-          className="primary wide"
-          data-testid="start-run"
-          disabled={busy || locked || !task.trim() || steps.length === 0}
-          onClick={() => void start()}
-        >
-          Запустить
-        </button>
-        <p className="hint" data-testid="start-hint">
-          «Запустить» отдаёт задачу отмеченным ролям. Токен Cursor для этого не нужен: без него запуск остаётся имитацией.
+        <p className="hint" data-testid="canvas-config-hint">
+          Здесь настраивается только цепочка. Новую задачу создайте на доске и перенесите в работу.
         </p>
         {live ? (
           <p className="now" data-testid="run-status">
@@ -716,7 +640,7 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
           </section>
         ) : (
           <p className="hint" data-testid="dialogue-hint">
-            После запуска нажмите роль на холсте: здесь откроется её диалог. Если конвейер ждёт, ответьте на вопрос на этом же экране.
+            Нажмите роль на холсте, чтобы посмотреть её диалог по уже идущему запуску. Новые задачи начинаются с доски.
           </p>
         )}
         {shown?.project ? (

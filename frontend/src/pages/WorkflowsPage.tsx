@@ -73,7 +73,7 @@ export function WorkflowsPage() {
               <div className="preview">
                 <IconNodes className="preview-icon" />
                 <strong>Создайте первый процесс</strong>
-                <p>Добавьте шаги агентов и точки проверки, затем запускайте задачи.</p>
+                <p>Добавьте шаги агентов и точки проверки. Задачи запускаются с доски.</p>
               </div>
             ) : (
               workflows.map((workflow) => (
