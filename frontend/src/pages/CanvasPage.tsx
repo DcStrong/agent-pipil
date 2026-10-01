@@ -516,22 +516,7 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
       </div>
       <aside className="side">
         {live ? (
-          <section className="busy-run" data-testid="canvas-busy">
-            <p>
-              Процесс занят: запуск «{taskTitle(live.task)}» ещё идёт. Пока он не закончится, холст не правится.
-            </p>
-            <div className="row-actions">
-              <a className="busy-link" data-testid="busy-open" href={href({ name: 'run', runId: live.id })}>
-                Открыть
-              </a>
-              <button type="button" data-testid="busy-continue" onClick={continueLive}>
-                Продолжить
-              </button>
-              <button type="button" data-testid="busy-stop" disabled={busy} onClick={() => void stopLive()}>
-                Остановить
-              </button>
-            </div>
-          </section>
+          <BusyRunNotice run={live} busy={busy} onContinue={continueLive} onStop={() => void stopLive()} />
         ) : null}
         <section className="preset-box" data-testid="preset-panel">
           <h2>Пресет</h2>
@@ -604,8 +589,11 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
             onChange={(event) => setDraft({ ...draft, description: event.target.value })}
           />
         </label>
-        <div className="roles">
+        <div className="roles" data-testid="roles-panel">
           <span className="kicker">Роли задачи</span>
+          {live ? (
+            <BusyRunNotice run={live} busy={busy} onContinue={continueLive} onStop={() => void stopLive()} />
+          ) : null}
           {palette.map((agent) => (
             <div className="role-row" key={agent.id}>
               <input
@@ -626,7 +614,7 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
           ))}
         </div>
         <TaskExamples agents={roleAgents} picked={pickedRoleIds} active={example} onApply={applyExample} />
-        <div className="editor">
+        <div className="editor" data-testid="place-panel">
           <h2>Поставить на холст</h2>
           <p className="hint">«Следом» вставляет шаг в цепочку. «Ответвить» ведёт вторую ветку от выбранного шага.</p>
           {placeAgent ? (
@@ -637,6 +625,9 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
               options={palette.map((agent) => ({ value: agent.id, label: agent.name }))}
               onChange={setPlaceAgentId}
             />
+          ) : null}
+          {live ? (
+            <BusyRunNotice run={live} busy={busy} onContinue={continueLive} onStop={() => void stopLive()} />
           ) : null}
           <div className="row-actions">
             <button type="button" data-testid="place-next" disabled={locked || !placeAgent} onClick={() => placeAgent && place(placeAgent, 'sequence')}>
@@ -872,6 +863,38 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
         </div>
       </aside>
     </div>
+  )
+}
+
+/** Занятый запуск. Панель длинная: верхнее предупреждение уезжает, поэтому то же самое стоит у ролей и у «Следом». */
+function BusyRunNotice({
+  run,
+  busy,
+  onContinue,
+  onStop,
+}: {
+  run: Run
+  busy: boolean
+  onContinue: () => void
+  onStop: () => void
+}) {
+  return (
+    <section className="busy-run" data-testid="canvas-busy">
+      <p>
+        Процесс занят: запуск «{taskTitle(run.task)}» ещё идёт. Пока он не закончится, холст не правится.
+      </p>
+      <div className="row-actions">
+        <a className="busy-link" data-testid="busy-open" href={href({ name: 'run', runId: run.id })}>
+          Открыть
+        </a>
+        <button type="button" data-testid="busy-continue" onClick={onContinue}>
+          Продолжить
+        </button>
+        <button type="button" data-testid="busy-stop" disabled={busy} onClick={onStop}>
+          Остановить
+        </button>
+      </div>
+    </section>
   )
 }
 

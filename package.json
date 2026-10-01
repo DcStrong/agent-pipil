@@ -9,7 +9,7 @@
     "dev": "concurrently -n api,web -c auto \"npm run start:dev -w backend\" \"npm run dev -w frontend\"",
     "start:backend": "npm run start:dev -w backend",
     "start:frontend": "npm run dev -w frontend",
-    "test": "npm test -w backend && npm run test:e2e -w backend",
+    "test": "npm test -w backend && npm run test:e2e -w backend && npm test -w frontend",
     "build": "npm run build -w backend && npm run build -w frontend"
   },
   "devDependencies": {
