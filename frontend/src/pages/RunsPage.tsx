@@ -1,5 +1,6 @@
 /** Список всех запусков: статус, число шагов и время. */
 import { useMemo, useState } from 'react'
+import { DarkSelect } from '../components/DarkSelect'
 import { IconCheck, IconSpark } from '../components/Icons'
 import { progress, taskTitle, when } from '../format'
 import { useLive } from '../live'
@@ -29,16 +30,15 @@ export function RunsPage() {
         <h1 className="page-title">
           Все запуски <em className="count">{runs.length}</em>
         </h1>
-        <label className="filter">
+        <div className="filter">
           <span className="sr">Фильтр</span>
-          <select value={filter} onChange={(event) => setFilter(event.target.value as (typeof filters)[number]['id'])}>
-            {filters.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-        </label>
+          <DarkSelect
+            testId="runs-filter"
+            value={filter}
+            options={filters.map((item) => ({ value: item.id, label: item.label }))}
+            onChange={(value) => setFilter(value as (typeof filters)[number]['id'])}
+          />
+        </div>
       </header>
       {visible.length === 0 ? <p className="empty">Таких запусков нет.</p> : null}
       <ul className="run-list">

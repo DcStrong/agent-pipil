@@ -700,7 +700,8 @@ button:not(.primary):not(.icon-btn):not(.text-btn):not(.node):not(.menu-item):no
 .modal-foot { justify-content: flex-end; margin-top: 8px; }
 
 .list-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.filter select { width: 180px; }
+.filter { width: 240px; flex: none; }
+.filter .dark-select-btn { padding-right: 14px; }
 .run-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .run-row {
   display: grid;

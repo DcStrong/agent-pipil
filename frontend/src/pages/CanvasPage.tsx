@@ -126,7 +126,7 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
       return
     }
     setError(null)
-    setDraft({ ...draft, steps: withHandoffs(next) })
+    setDraft((current) => (current ? { ...current, steps: withHandoffs(next) } : current))
     if (selectId) setSelected(selectId)
   }
 
@@ -281,13 +281,15 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
   }
 
   async function save() {
-    const next = withHandoffs(materialize(draft.steps))
+    if (!draft) return
+    const source = draft
+    const next = withHandoffs(materialize(source.steps))
     setBusy(true)
     setError(null)
     try {
-      const saved = await api.saveWorkflow(draft.id, {
-        name: draft.name,
-        description: draft.description,
+      const saved = await api.saveWorkflow(source.id, {
+        name: source.name,
+        description: source.description,
         steps: next,
       })
       upsertWorkflow(saved)
@@ -374,13 +376,15 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
   }
 
   async function start() {
-    const next = withHandoffs(materialize(draft.steps))
+    if (!draft) return
+    const source = draft
+    const next = withHandoffs(materialize(source.steps))
     setBusy(true)
     setError(null)
     try {
-      const saved = await api.saveWorkflow(draft.id, {
-        name: draft.name,
-        description: draft.description,
+      const saved = await api.saveWorkflow(source.id, {
+        name: source.name,
+        description: source.description,
         steps: next,
       })
       upsertWorkflow(saved)
