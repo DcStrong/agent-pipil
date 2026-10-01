@@ -395,7 +395,7 @@ button:not(.primary):not(.icon-btn):not(.text-btn):not(.node):not(.menu-item):no
 button:disabled { opacity: 0.45; cursor: default; }
 .wide { width: 100%; }
 .row-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.decision {
+.decision, .busy-run {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -405,6 +405,15 @@ button:disabled { opacity: 0.45; cursor: default; }
   border: 1px solid #5a4a1d;
   border-radius: 12px;
   background: #1a160d;
+}
+.busy-run p { color: var(--text); font-size: 14px; line-height: 1.45; }
+.busy-run .row-actions a.busy-link {
+  border: 1px solid #34343a;
+  border-radius: 10px;
+  background: #1b1b1f;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 1.2;
 }
 .decision p, .now { color: var(--muted); font-size: 14px; line-height: 1.4; }
 .decision .row-actions { width: auto; margin: 0; }

@@ -30,8 +30,22 @@ export function kindLabel(kind: AgentKind): string {
   return 'Свой'
 }
 
+/**
+ * Сколько шагов уже закончено.
+ * Повтор того же шага (тестировщик вернул работу разработчику) в счётчик не входит:
+ * иначе список показывает больше законченных шагов, чем их есть.
+ */
+export function finishedCount(run: Run): number {
+  const known = new Set(run.steps.map((step) => step.stepId))
+  const seen = new Set<string>()
+  for (const item of run.work) {
+    if (known.has(item.stepId)) seen.add(item.stepId)
+  }
+  return Math.min(seen.size, run.steps.length)
+}
+
 export function progress(run: Run): string {
-  return `${run.work.length}/${run.steps.length}`
+  return `${finishedCount(run)}/${run.steps.length}`
 }
 
 export function when(iso: string | null): string {
