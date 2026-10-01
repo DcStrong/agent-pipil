@@ -72,19 +72,15 @@ export class PresetsService {
     return { name: preset.name, description: preset.description, steps };
   }
 
-  /** Новый процесс с цепочкой пресета. Запуск по-прежнему идёт имитацией. */
+  /** Черновик процесса с цепочкой пресета. В список не пишется — только «Сохранить» на холсте. */
   open(id: string): Workflow {
     const built = this.stepsFor(id);
-    const workflow: Workflow = {
+    return {
       id: randomUUID(),
       name: built.name,
       description: built.description,
       steps: built.steps,
     };
-    this.store.mutate((state) => {
-      state.workflows.push(workflow);
-    });
-    return workflow;
   }
 
   save(

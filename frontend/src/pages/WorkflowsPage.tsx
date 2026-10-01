@@ -1,5 +1,6 @@
 /** Сводка процессов, агентов в сети и таблицы запусков. Пресет открывает готовую цепочку. */
 import { useState } from 'react'
+import { v4 as uuidv4 } from 'uuid'
 import { api, messageOf } from '../api'
 import { IconNodes, IconPlus } from '../components/Icons'
 import { SetupModal } from '../components/SetupModal'
@@ -7,6 +8,11 @@ import { agentOnline, isOpenRun, progress, statusLabel, taskTitle, when } from '
 import { useLive } from '../live'
 import { href } from '../route'
 import type { PipelinePreset, Run, Workflow } from '../types'
+import {
+  bindPresetDraft,
+  presetDraftWorkflowId,
+  saveWorkflowDraft,
+} from '../workflow-draft'
 
 function workflowDeleteBlockReason(workflowId: string, runs: Run[]): string | null {
   const active = runs.some((run) => run.workflowId === workflowId && isOpenRun(run.status))
@@ -15,8 +21,7 @@ function workflowDeleteBlockReason(workflowId: string, runs: Run[]): string | nu
 }
 
 export function WorkflowsPage() {
-  const { ready, error, workflows, agents, runs, cursor, presets, upsertWorkflow, removeWorkflow, removePreset } =
-    useLive()
+  const { ready, error, workflows, agents, runs, cursor, presets, removeWorkflow, removePreset } = useLive()
   const [setup, setSetup] = useState(false)
   const [opening, setOpening] = useState<string | null>(null)
   const [removingPreset, setRemovingPreset] = useState<string | null>(null)
@@ -30,9 +35,17 @@ export function WorkflowsPage() {
     setOpening(preset.id)
     setActionError(null)
     try {
-      const workflow = await api.openPreset(preset.id)
-      upsertWorkflow(workflow)
-      window.location.hash = href({ name: 'canvas', workflowId: workflow.id })
+      const built = await api.presetSteps(preset.id)
+      const workflowId = presetDraftWorkflowId(preset.id) ?? uuidv4()
+      const workflow: Workflow = {
+        id: workflowId,
+        name: built.name,
+        description: built.description,
+        steps: built.steps,
+      }
+      saveWorkflowDraft(workflow)
+      bindPresetDraft(preset.id, workflowId)
+      window.location.hash = href({ name: 'canvas', workflowId })
     } catch (reason) {
       setActionError(messageOf(reason))
     } finally {
@@ -79,7 +92,9 @@ export function WorkflowsPage() {
           <header className="card-head">
             <span>Пресеты</span>
           </header>
-          <p className="preset-lead">Выберите имя — на холсте появится эта цепочка. Свою можно сохранить с холста.</p>
+          <p className="preset-lead">
+            Выберите имя — откроется холст с этой цепочкой. Чтобы процесс появился в списке ниже, сохраните его на холсте.
+          </p>
           <div className="preset-grid">
             {presets.map((preset) => (
               <article key={preset.id} className="preset-tile" data-testid={`preset-tile-${preset.id}`}>

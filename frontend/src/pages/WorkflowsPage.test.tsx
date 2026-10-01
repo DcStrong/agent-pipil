@@ -8,7 +8,8 @@ const harness = vi.hoisted(() => ({
   live: null as unknown,
   deletePreset: vi.fn(),
   deleteWorkflow: vi.fn(),
-  openPreset: vi.fn(),
+  presetSteps: vi.fn(),
+  locationHash: '',
 }))
 
 vi.mock('../live', () => ({
@@ -23,9 +24,19 @@ vi.mock('../api', async (importOriginal) => {
       ...actual.api,
       deletePreset: (...args: Parameters<typeof actual.api.deletePreset>) => harness.deletePreset(...args),
       deleteWorkflow: (...args: Parameters<typeof actual.api.deleteWorkflow>) => harness.deleteWorkflow(...args),
-      openPreset: (...args: Parameters<typeof actual.api.openPreset>) => harness.openPreset(...args),
+      presetSteps: (...args: Parameters<typeof actual.api.presetSteps>) => harness.presetSteps(...args),
     },
   }
+})
+
+vi.stubGlobal('location', {
+  ...window.location,
+  get hash() {
+    return harness.locationHash
+  },
+  set hash(value: string) {
+    harness.locationHash = value
+  },
 })
 
 function step(title: string, kind: AgentKind = 'developer') {
@@ -126,9 +137,33 @@ function mountWorkflows(workflows: Workflow[], runs: Run[] = []) {
 beforeEach(() => {
   harness.deletePreset.mockReset()
   harness.deleteWorkflow.mockReset()
-  harness.openPreset.mockReset()
+  harness.presetSteps.mockReset()
+  harness.locationHash = ''
+  sessionStorage.clear()
   harness.deletePreset.mockResolvedValue({ ok: true })
   harness.deleteWorkflow.mockResolvedValue({ ok: true })
+  harness.presetSteps.mockResolvedValue({
+    name: builtin.name,
+    description: 'Описание пресета',
+    steps: [
+      {
+        id: 'step_preset_1',
+        agentId: 'agent_1',
+        title: 'Анализ',
+        mode: 'automatic',
+        handoff: '',
+        nextIds: ['step_preset_2'],
+      },
+      {
+        id: 'step_preset_2',
+        agentId: 'agent_2',
+        title: 'Разработка',
+        mode: 'automatic',
+        handoff: '',
+        nextIds: [],
+      },
+    ],
+  })
 })
 
 afterEach(() => {
@@ -137,6 +172,49 @@ afterEach(() => {
 })
 
 describe('Процессы: пресеты в сетке', () => {
+  it('по клику на пресет открывает холст и не добавляет процесс в список', async () => {
+    const upsertWorkflow = vi.fn()
+    harness.live = {
+      ready: true,
+      error: null,
+      workflows: [],
+      agents: [],
+      runs: [],
+      cursor: { connected: false, source: 'none', hint: null },
+      presets: [builtin],
+      upsertWorkflow,
+      removePreset: vi.fn(),
+    }
+    render(<WorkflowsPage />)
+    await press(screen.getByTestId('preset_feature'))
+    expect(harness.presetSteps).toHaveBeenCalledWith('preset_feature')
+    expect(upsertWorkflow).not.toHaveBeenCalled()
+    expect(harness.locationHash).toContain('#/workflow/')
+    const draftId = harness.locationHash.replace('#/workflow/', '')
+    expect(sessionStorage.getItem('pipil:workflow-drafts')).toContain(draftId)
+  })
+
+  it('повторный клик по пресету без сохранения ведёт на тот же черновик', async () => {
+    harness.live = {
+      ready: true,
+      error: null,
+      workflows: [],
+      agents: [],
+      runs: [],
+      cursor: { connected: false, source: 'none', hint: null },
+      presets: [builtin],
+      upsertWorkflow: vi.fn(),
+      removePreset: vi.fn(),
+    }
+    const view = render(<WorkflowsPage />)
+    await press(screen.getByTestId('preset_feature'))
+    const first = harness.locationHash
+    view.rerender(<WorkflowsPage />)
+    await press(screen.getByTestId('preset_feature'))
+    expect(harness.locationHash).toBe(first)
+    expect(harness.presetSteps).toHaveBeenCalledTimes(2)
+  })
+
   it('убирает свой пресет из сетки по кнопке «Убрать»', async () => {
     const { removePreset, sync } = mount([builtin, custom])
     expect(screen.getByTestId('preset-tile-preset_custom_1')).toBeTruthy()

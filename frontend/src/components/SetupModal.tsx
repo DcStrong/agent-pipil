@@ -1,8 +1,8 @@
 /** Окно создания процесса: статусы агентов, затем публикация на сервере. */
 import { useEffect, useRef, useState } from 'react'
 import { api, messageOf } from '../api'
-import { useLive } from '../live'
 import { href } from '../route'
+import { saveWorkflowDraft } from '../workflow-draft'
 import { IconClose } from './Icons'
 
 type Phase = 'done' | 'active' | 'wait'
@@ -27,14 +27,12 @@ export function SetupModal({
   initialName: string
   onClose: () => void
 }) {
-  const { upsertWorkflow } = useLive()
   const [name, setName] = useState(initialName)
   const [frame, setFrame] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const nameRef = useRef(initialName)
   const closeRef = useRef(onClose)
-  const upsertRef = useRef(upsertWorkflow)
-  /** Один показ окна публикует процесс один раз, даже если таймер сработает повторно. */
+  /** Один показ окна готовит черновик один раз, даже если таймер сработает повторно. */
   const published = useRef(false)
 
   useEffect(() => {
@@ -44,10 +42,6 @@ export function SetupModal({
   useEffect(() => {
     closeRef.current = onClose
   }, [onClose])
-
-  useEffect(() => {
-    upsertRef.current = upsertWorkflow
-  }, [upsertWorkflow])
 
   useEffect(() => {
     let cancel = false
@@ -64,10 +58,9 @@ export function SetupModal({
       published.current = true
       setFrame(frames.length - 2)
       void api
-        .createWorkflow(nameRef.current.trim() || 'Новый процесс')
+        .workflowTemplate(nameRef.current.trim() || 'Новый процесс')
         .then((workflow) => {
-          // Сначала список, потом адрес. Иначе холст открывается раньше, чем процесс в нём появляется.
-          upsertRef.current(workflow)
+          saveWorkflowDraft(workflow)
           if (cancel) return
           setFrame(frames.length - 1)
           window.location.hash = href({ name: 'canvas', workflowId: workflow.id })
@@ -92,7 +85,7 @@ export function SetupModal({
         <header className="modal-head">
           <div>
             <h2 id="setup-title">Настройка процессов</h2>
-            <p>Создаём нужных агентов, затем публикуем выбранный процесс.</p>
+            <p>Создаём нужных агентов, затем откроем холст. В список процесс попадёт после «Сохранить».</p>
           </div>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Закрыть">
             <IconClose />
@@ -122,8 +115,8 @@ export function SetupModal({
               <AgentLine
                 phase={current.flow}
                 name={name.trim() || 'Новый процесс'}
-                creating="Публикуем процесс…"
-                created="Процесс опубликован"
+                creating="Открываем холст…"
+                created="Холст готов"
                 last
               />
             </div>

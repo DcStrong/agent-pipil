@@ -31,8 +31,57 @@ export class WorkflowsService {
     return workflow;
   }
 
+  /** Черновик «Новый процесс» для холста: те же шаги, что при публикации, но без записи в store. */
+  template(name: string): Workflow {
+    return this.seedWorkflow(randomUUID(), name);
+  }
+
+  /** Первое сохранение с холста: имя, описание и шаги одним запросом. */
+  publish(
+    name: string,
+    description: string,
+    steps: StepInput[],
+  ): Workflow {
+    const workflow = this.normalizeWorkflow(
+      randomUUID(),
+      name,
+      description,
+      steps,
+    );
+    this.store.mutate((state) => {
+      state.workflows.push(workflow);
+    });
+    return workflow;
+  }
+
   /** Собирает процесс из агентов планировщика, сборщика и ревьюера. */
   create(name: string): Workflow {
+    const workflow = this.seedWorkflow(randomUUID(), name);
+    this.store.mutate((state) => {
+      state.workflows.push(workflow);
+    });
+    return workflow;
+  }
+
+  replace(
+    id: string,
+    name: string,
+    description: string,
+    steps: StepInput[],
+  ): Workflow {
+    if (!this.store.read().workflows.some((workflow) => workflow.id === id)) {
+      throw new NotFoundException('Процесс не найден.');
+    }
+    const workflow = this.normalizeWorkflow(id, name, description, steps);
+    this.store.mutate((state) => {
+      state.workflows = state.workflows.map((item) =>
+        item.id === id ? workflow : item,
+      );
+    });
+    return workflow;
+  }
+
+  private seedWorkflow(id: string, name: string): Workflow {
     const trimmed = name.trim();
     if (!trimmed) throw new BadRequestException('Процессу нужно имя.');
     if (trimmed.length > 80)
@@ -47,8 +96,8 @@ export class WorkflowsService {
     if (!planner || !builder || !reviewer) {
       throw new BadRequestException('Сначала добавьте хотя бы одного агента.');
     }
-    const workflow: Workflow = {
-      id: randomUUID(),
+    return {
+      id,
       name: trimmed,
       description:
         'План и сборка идут сами. Проверка ждёт подтверждения владельца.',
@@ -79,21 +128,14 @@ export class WorkflowsService {
         },
       ],
     };
-    this.store.mutate((state) => {
-      state.workflows.push(workflow);
-    });
-    return workflow;
   }
 
-  replace(
+  private normalizeWorkflow(
     id: string,
     name: string,
     description: string,
     steps: StepInput[],
   ): Workflow {
-    if (!this.store.read().workflows.some((workflow) => workflow.id === id)) {
-      throw new NotFoundException('Процесс не найден.');
-    }
     const trimmed = name.trim();
     if (!trimmed) throw new BadRequestException('Процессу нужно имя.');
     if (!Array.isArray(steps) || steps.length === 0) {
@@ -169,18 +211,12 @@ export class WorkflowsService {
         );
       }
     }
-    const workflow: Workflow = {
+    return {
       id,
       name: trimmed,
       description: description.trim(),
       steps: nextSteps,
     };
-    this.store.mutate((state) => {
-      state.workflows = state.workflows.map((item) =>
-        item.id === id ? workflow : item,
-      );
-    });
-    return workflow;
   }
 
   remove(id: string): void {
