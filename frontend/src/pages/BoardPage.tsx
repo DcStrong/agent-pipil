@@ -29,6 +29,7 @@ export function BoardPage() {
   const [newProjectPath, setNewProjectPath] = useState('')
   const [newProjectAlias, setNewProjectAlias] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [projectSaveError, setProjectSaveError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [over, setOver] = useState<BoardStatus | null>(null)
 
@@ -76,20 +77,27 @@ export function BoardPage() {
 
   async function addProjectFromForm() {
     setBusy(true)
-    setError(null)
+    setProjectSaveError(null)
     try {
       const created = await api.addProject({ kind: newProjectKind, path: newProjectPath })
+      let saved = created
       if (newProjectAlias.trim()) {
-        upsertProject(await api.updateProjectAlias(created.id, newProjectAlias))
-      } else {
-        upsertProject(created)
+        try {
+          saved = await api.updateProjectAlias(created.id, newProjectAlias)
+        } catch (reason) {
+          setProjectSaveError(
+            `Проект сохранён, но алиас не записался: ${messageOf(reason)}`,
+          )
+        }
       }
-      setProjectId(created.id)
+      upsertProject(saved)
+      setProjectId(saved.id)
+      setError(null)
       setNewProjectPath('')
       setNewProjectAlias('')
       setAddProjectOpen(false)
     } catch (reason) {
-      setError(messageOf(reason))
+      setProjectSaveError(messageOf(reason))
     } finally {
       setBusy(false)
     }
@@ -199,7 +207,10 @@ export function BoardPage() {
               type="button"
               className="text-btn"
               data-testid="toggle-add-project"
-              onClick={() => setAddProjectOpen((value) => !value)}
+              onClick={() => {
+                setAddProjectOpen((value) => !value)
+                setProjectSaveError(null)
+              }}
             >
               {addProjectOpen ? 'Скрыть добавление проекта' : 'Добавить новый проект или workspace'}
             </button>
@@ -236,15 +247,22 @@ export function BoardPage() {
                     placeholder="Как показывать в списке"
                   />
                 </label>
-                <button
-                  type="button"
-                  className="primary"
-                  data-testid="save-inline-project"
-                  disabled={busy || !newProjectPath.trim()}
-                  onClick={() => void addProjectFromForm()}
-                >
-                  Сохранить в раздел проектов
-                </button>
+                <div className="compose-action">
+                  <button
+                    type="button"
+                    className="primary"
+                    data-testid="save-inline-project"
+                    disabled={busy || !newProjectPath.trim()}
+                    onClick={() => void addProjectFromForm()}
+                  >
+                    Сохранить в раздел проектов
+                  </button>
+                  {projectSaveError ? (
+                    <p className="inline-error" data-testid="inline-project-save-error">
+                      {projectSaveError}
+                    </p>
+                  ) : null}
+                </div>
               </div>
             ) : null}
           </section>

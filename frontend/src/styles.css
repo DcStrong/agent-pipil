@@ -930,7 +930,7 @@ code { font-family: ui-monospace, monospace; font-size: 0.92em; }
 }
 .board-head .primary svg { width: 16px; height: 16px; }
 .compose {
-  padding: 16px;
+  padding: 16px 16px 20px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -939,6 +939,7 @@ code { font-family: ui-monospace, monospace; font-size: 0.92em; }
   overflow-y: auto;
   flex-shrink: 1;
   min-height: 0;
+  min-width: 0;
 }
 .path-input-row {
   display: flex;
@@ -961,7 +962,52 @@ code { font-family: ui-monospace, monospace; font-size: 0.92em; }
 .picker-list button { width: 100%; text-align: left; padding: 8px 10px; border-radius: 8px; border: 1px solid #2a2a30; background: #141418; color: inherit; cursor: pointer; }
 .picker-list small { display: block; opacity: 0.7; margin-top: 2px; }
 .picked-agents { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.inline-add-project { margin-top: 10px; padding-top: 10px; border-top: 1px solid #222226; }
+.inline-add-project {
+  margin-top: 10px;
+  padding-top: 10px;
+  padding-bottom: 4px;
+  border-top: 1px solid #222226;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.compose-action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 100%;
+}
+.compose-action .primary {
+  align-self: flex-start;
+  width: max-content;
+  max-width: 100%;
+  white-space: normal;
+  text-align: left;
+  line-height: 1.35;
+}
+.inline-error {
+  margin: 0;
+  color: #e88a7a;
+  font-size: 13px;
+  line-height: 1.4;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.compose .row-actions {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  width: 100%;
+}
+.compose .row-actions > button,
+.compose .row-actions > a {
+  align-self: flex-start;
+  max-width: 100%;
+  white-space: normal;
+}
 .team-pick {
   border: 0;
   margin: 0;
@@ -985,6 +1031,16 @@ code { font-family: ui-monospace, monospace; font-size: 0.92em; }
 }
 .team-pick .row-actions {
   margin-top: 2px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+}
+.team-pick .row-actions > button {
+  width: max-content;
+  max-width: 100%;
+  white-space: normal;
+  text-align: left;
 }
 .team-row {
   display: grid;
@@ -1033,10 +1089,39 @@ code { font-family: ui-monospace, monospace; font-size: 0.92em; }
   border: 1px solid #2a2a30;
   border-radius: 12px;
   background: var(--card);
+  min-width: 0;
 }
 .task-card[draggable='true'] { cursor: grab; }
-.task-card h2 { margin: 0; font-size: 15px; }
-.task-card > p { color: var(--muted); font-size: 13px; line-height: 1.4; }
+.task-card h2 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.task-card > p,
+.task-card .hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.task-card .member-list { margin: 0; }
+.task-card .row-actions {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid #222226;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.task-card .row-actions > button,
+.task-card .row-actions > a {
+  flex: none;
+  max-width: 100%;
+}
 .member-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .member-line {
   display: flex;
@@ -1046,6 +1131,16 @@ code { font-family: ui-monospace, monospace; font-size: 0.92em; }
   color: var(--muted);
   font-size: 12px;
   line-height: 1.35;
+}
+.task-card .member-line {
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 6px;
+}
+.task-card .member-line .presence,
+.task-card .member-line .presence.off {
+  flex: none;
+  align-self: center;
 }
 .member-line strong { color: var(--text); font-weight: 600; }
 .plan-lead { margin: 8px 0 16px; }

@@ -10,4 +10,9 @@ describe('форма compose на доске', () => {
     expect(styles).toMatch(/\.compose\s*\{[\s\S]*max-height:/)
     expect(styles).toMatch(/\.compose\s*\{[\s\S]*overflow-y:\s*auto/)
   })
+
+  it('выстраивает кнопки формы в колонку', () => {
+    expect(styles).toMatch(/\.compose \.row-actions\s*\{[\s\S]*flex-direction:\s*column/)
+    expect(styles).toMatch(/\.team-pick \.row-actions\s*\{[\s\S]*flex-direction:\s*column/)
+  })
 })
