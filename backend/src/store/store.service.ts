@@ -5,6 +5,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import {
   createSeedState,
+  ensureSavedProjects,
   ensureSeedPresets,
   ensureSeedRoles,
   parseState,
@@ -24,10 +25,12 @@ export class StoreService {
     this.state = loaded.state;
     const rolesAdded = ensureSeedRoles(this.state);
     const presetsAdded = ensureSeedPresets(this.state);
+    const projectsAdded = ensureSavedProjects(this.state);
     if (
       loaded.wroteSeed ||
       rolesAdded ||
       presetsAdded ||
+      projectsAdded ||
       this.failInterruptedRuns()
     ) {
       this.enqueueWrite();

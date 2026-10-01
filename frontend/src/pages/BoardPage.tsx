@@ -1,45 +1,115 @@
 /** Доска из трёх колонок. Перенос в работу запускает выбранную команду. */
-import { useState, type DragEvent } from 'react'
+import { useState, type FormEvent, type DragEvent } from 'react'
 import { api, messageOf } from '../api'
 import { columnLabel, defaultWorkMode, memberStateLabel, modeLabel } from '../board'
+import { DarkSelect } from '../components/DarkSelect'
 import { IconPlus } from '../components/Icons'
 import { useLive } from '../live'
 import { href } from '../route'
-import type { Agent, BoardStatus, BoardTask, WorkMode } from '../types'
+import type { Agent, BoardStatus, BoardTask, SavedProjectKind, WorkMode, Workflow } from '../types'
 
 const COLUMNS: BoardStatus[] = ['new', 'in_progress', 'review']
 
+type PickedAgent = { agentId: string; mode: WorkMode }
+
 export function BoardPage() {
-  const { ready, error: loadError, agents, tasks, upsertTask } = useLive()
+  const { ready, error: loadError, agents, workflows, projects, tasks, upsertTask, upsertProject } =
+    useLive()
   const [creating, setCreating] = useState(false)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
-  const [picked, setPicked] = useState<Record<string, WorkMode | 'off'> | null>(null)
+  const [projectId, setProjectId] = useState('')
+  const [pickedAgents, setPickedAgents] = useState<PickedAgent[]>([])
+  const [workflowId, setWorkflowId] = useState<string | null>(null)
+  const [agentPickerOpen, setAgentPickerOpen] = useState(false)
+  const [processPickerOpen, setProcessPickerOpen] = useState(false)
+  const [addProjectOpen, setAddProjectOpen] = useState(false)
+  const [newProjectKind, setNewProjectKind] = useState<SavedProjectKind>('folder')
+  const [newProjectPath, setNewProjectPath] = useState('')
+  const [newProjectAlias, setNewProjectAlias] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [over, setOver] = useState<BoardStatus | null>(null)
 
-  const selection = picked ?? defaultSelection(agents)
-  const team = agents.flatMap((agent) => {
-    const mode = selection[agent.id]
-    if (!mode || mode === 'off') return []
-    return [{ agentId: agent.id, mode }]
-  })
+  const selectedWorkflow = workflows.find((item) => item.id === workflowId) ?? null
+  const selectedProject = projects.find((item) => item.id === projectId) ?? null
 
-  async function create() {
+  function validate(): string | null {
+    if (!title.trim()) return 'Напишите название задачи.'
+    if (!projectId) return 'Выберите проект или workspace.'
+    if (!workflowId && pickedAgents.length === 0) {
+      return 'Добавьте агентов или выберите процесс.'
+    }
+    return null
+  }
+
+  async function create(event: FormEvent) {
+    event.preventDefault()
+    const problem = validate()
+    if (problem) {
+      setError(problem)
+      return
+    }
     setBusy(true)
     setError(null)
     try {
-      const task = await api.createTask({ title, description, team })
+      const task = await api.createTask({
+        title,
+        description,
+        projectId,
+        team: workflowId ? undefined : pickedAgents,
+        workflowId: workflowId ?? undefined,
+      })
       upsertTask(task)
       setTitle('')
       setDescription('')
+      setPickedAgents([])
+      setWorkflowId(null)
       setCreating(false)
     } catch (reason) {
       setError(messageOf(reason))
     } finally {
       setBusy(false)
     }
+  }
+
+  async function addProjectFromForm(event: FormEvent) {
+    event.preventDefault()
+    setBusy(true)
+    setError(null)
+    try {
+      const created = await api.addProject({ kind: newProjectKind, path: newProjectPath })
+      if (newProjectAlias.trim()) {
+        upsertProject(await api.updateProjectAlias(created.id, newProjectAlias))
+      } else {
+        upsertProject(created)
+      }
+      setProjectId(created.id)
+      setNewProjectPath('')
+      setNewProjectAlias('')
+      setAddProjectOpen(false)
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function addAgent(agent: Agent) {
+    if (pickedAgents.some((item) => item.agentId === agent.id)) return
+    setWorkflowId(null)
+    setPickedAgents((list) => [...list, { agentId: agent.id, mode: defaultWorkMode(agent.kind) }])
+    setAgentPickerOpen(false)
+  }
+
+  function removeAgent(agentId: string) {
+    setPickedAgents((list) => list.filter((item) => item.agentId !== agentId))
+  }
+
+  function chooseWorkflow(workflow: Workflow) {
+    setPickedAgents([])
+    setWorkflowId(workflow.id)
+    setProcessPickerOpen(false)
   }
 
   async function move(id: string, status: BoardStatus) {
@@ -60,13 +130,18 @@ export function BoardPage() {
     if (id) void move(id, status)
   }
 
+  const agentMap = new Map(agents.map((agent) => [agent.id, agent]))
+  const availableAgents = agents.filter(
+    (agent) => !pickedAgents.some((item) => item.agentId === agent.id),
+  )
+
   return (
     <div className="board-page">
       <header className="board-head">
         <div>
           <h1>Доска</h1>
           <p className="hint board-hint">
-            Новая задача ждёт в первой колонке. В работе её берёт выбранная команда. На проверку она
+            Новая задача ждёт в первой колонке. В работе её берёт выбранная команда или процесс. На проверку она
             переходит сама, когда ход закончен.
           </p>
         </div>
@@ -76,16 +151,10 @@ export function BoardPage() {
         </button>
       </header>
       {loadError ? <p className="banner">{loadError}</p> : null}
-      {error ? <p className="banner">{error}</p> : null}
+      {error ? <p className="banner" data-testid="board-form-error">{error}</p> : null}
       {!ready && !loadError ? <p className="muted">Загрузка…</p> : null}
       {creating ? (
-        <form
-          className="card compose"
-          onSubmit={(event) => {
-            event.preventDefault()
-            void create()
-          }}
-        >
+        <form className="card compose" onSubmit={(event) => void create(event)}>
           <label className="field">
             <span>Название</span>
             <input data-testid="task-title" value={title} onChange={(event) => setTitle(event.target.value)} />
@@ -99,20 +168,180 @@ export function BoardPage() {
               onChange={(event) => setDescription(event.target.value)}
             />
           </label>
+
           <fieldset className="team-pick">
-            <legend>Команда</legend>
-            <p className="hint">Вопрос не проходит через план. План можно править и только потом отдать в сборку.</p>
-            {agents.map((agent) => (
-              <TeamRow
-                key={agent.id}
-                agent={agent}
-                mode={selection[agent.id] ?? 'off'}
-                onMode={(mode) => setPicked({ ...selection, [agent.id]: mode })}
+            <legend>Проект</legend>
+            {projects.length > 0 ? (
+              <DarkSelect
+                testId="task-project"
+                value={projectId}
+                options={[
+                  { value: '', label: '— выберите проект или workspace —' },
+                  ...projects.map((item) => ({
+                    value: item.id,
+                    label: `${item.label} (${item.kind === 'workspace' ? 'workspace' : 'папка'})`,
+                  })),
+                ]}
+                onChange={setProjectId}
               />
-            ))}
+            ) : (
+              <p className="hint">Сохранённых проектов пока нет — добавьте ниже.</p>
+            )}
+            {selectedProject ? (
+              <p className="where" data-testid="task-project-label">
+                Задача для: {selectedProject.label} ·{' '}
+                {selectedProject.kind === 'workspace' ? 'workspace' : 'папка'} {selectedProject.folderName}
+              </p>
+            ) : null}
+            <button
+              type="button"
+              className="text-btn"
+              data-testid="toggle-add-project"
+              onClick={() => setAddProjectOpen((value) => !value)}
+            >
+              {addProjectOpen ? 'Скрыть добавление проекта' : 'Добавить новый проект или workspace'}
+            </button>
+            {addProjectOpen ? (
+              <div className="inline-add-project" data-testid="inline-add-project">
+                <form onSubmit={(event) => void addProjectFromForm(event)}>
+                  <label className="field">
+                    <span>Тип</span>
+                    <select
+                      value={newProjectKind}
+                      onChange={(event) => setNewProjectKind(event.target.value as SavedProjectKind)}
+                    >
+                      <option value="folder">Папка</option>
+                      <option value="workspace">Файл .code-workspace</option>
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Путь</span>
+                    <input
+                      data-testid="inline-project-path"
+                      value={newProjectPath}
+                      onChange={(event) => setNewProjectPath(event.target.value)}
+                      placeholder="Путь на этой машине"
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Алиас (необязательно)</span>
+                    <input
+                      data-testid="inline-project-alias"
+                      value={newProjectAlias}
+                      onChange={(event) => setNewProjectAlias(event.target.value)}
+                      placeholder="Как показывать в списке"
+                    />
+                  </label>
+                  <button type="submit" className="primary" disabled={busy || !newProjectPath.trim()}>
+                    Сохранить в раздел проектов
+                  </button>
+                </form>
+              </div>
+            ) : null}
           </fieldset>
+
+          <fieldset className="team-pick">
+            <legend>Исполнители</legend>
+            <p className="hint">Либо отдельные агенты с режимом, либо готовый процесс с холста — не оба сразу.</p>
+            <div className="row-actions">
+              <button
+                type="button"
+                data-testid="add-agent"
+                disabled={busy}
+                onClick={() => {
+                  setProcessPickerOpen(false)
+                  setAgentPickerOpen((value) => !value)
+                }}
+              >
+                Добавить агента
+              </button>
+              <button
+                type="button"
+                data-testid="pick-process"
+                disabled={busy}
+                onClick={() => {
+                  setAgentPickerOpen(false)
+                  setProcessPickerOpen((value) => !value)
+                }}
+              >
+                Выбрать процесс
+              </button>
+            </div>
+            {agentPickerOpen ? (
+              <ul className="picker-list" data-testid="agent-picker">
+                {availableAgents.length === 0 ? (
+                  <li className="hint">Все агенты уже добавлены.</li>
+                ) : (
+                  availableAgents.map((agent) => (
+                    <li key={agent.id}>
+                      <button type="button" onClick={() => addAgent(agent)}>
+                        {agent.name}
+                      </button>
+                    </li>
+                  ))
+                )}
+              </ul>
+            ) : null}
+            {processPickerOpen ? (
+              <ul className="picker-list" data-testid="process-picker">
+                {workflows.length === 0 ? (
+                  <li className="hint">Процессов пока нет — создайте на экране «Процессы».</li>
+                ) : (
+                  workflows.map((workflow) => (
+                    <li key={workflow.id}>
+                      <button type="button" onClick={() => chooseWorkflow(workflow)}>
+                        {workflow.name}
+                        <small>{workflow.steps.length} шаг(ов)</small>
+                      </button>
+                    </li>
+                  ))
+                )}
+              </ul>
+            ) : null}
+            {selectedWorkflow ? (
+              <p className="where" data-testid="selected-process">
+                Процесс: {selectedWorkflow.name}
+                <button type="button" className="text-btn" onClick={() => setWorkflowId(null)}>
+                  Убрать
+                </button>
+              </p>
+            ) : null}
+            {pickedAgents.length > 0 ? (
+              <ul className="picked-agents" data-testid="picked-agents">
+                {pickedAgents.map((member) => {
+                  const agent = agentMap.get(member.agentId)
+                  return (
+                    <li key={member.agentId} className="team-row">
+                      <strong>{agent?.name ?? member.agentId}</strong>
+                      <select
+                        aria-label={`Режим: ${agent?.name ?? member.agentId}`}
+                        value={member.mode}
+                        onChange={(event) =>
+                          setPickedAgents((list) =>
+                            list.map((item) =>
+                              item.agentId === member.agentId
+                                ? { ...item, mode: event.target.value as WorkMode }
+                                : item,
+                            ),
+                          )
+                        }
+                      >
+                        <option value="ask">Вопрос</option>
+                        <option value="plan">План</option>
+                        <option value="agent">Агент</option>
+                      </select>
+                      <button type="button" onClick={() => removeAgent(member.agentId)}>
+                        Убрать
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            ) : null}
+          </fieldset>
+
           <div className="row-actions">
-            <button type="submit" className="primary" data-testid="create-task" disabled={busy || !title.trim() || team.length === 0}>
+            <button type="submit" className="primary" data-testid="create-task" disabled={busy || !title.trim()}>
               Создать
             </button>
             <button type="button" onClick={() => setCreating(false)}>
@@ -150,7 +379,7 @@ export function BoardPage() {
                   <TaskCard
                     key={task.id}
                     task={task}
-                    names={new Map(agents.map((agent) => [agent.id, agent.name]))}
+                    names={agentMap}
                     onMove={(next) => void move(task.id, next)}
                   />
                 ))}
@@ -163,56 +392,13 @@ export function BoardPage() {
   )
 }
 
-function defaultSelection(agents: Agent[]): Record<string, WorkMode | 'off'> {
-  const next: Record<string, WorkMode | 'off'> = {}
-  for (const agent of agents) {
-    const on = agent.id === 'role_architect' || agent.id === 'role_developer'
-    next[agent.id] = on ? defaultWorkMode(agent.kind) : 'off'
-  }
-  return next
-}
-
-function TeamRow({
-  agent,
-  mode,
-  onMode,
-}: {
-  agent: Agent
-  mode: WorkMode | 'off'
-  onMode: (mode: WorkMode | 'off') => void
-}) {
-  const on = mode !== 'off'
-  return (
-    <div className="team-row">
-      <input
-        id={`team-${agent.id}`}
-        type="checkbox"
-        checked={on}
-        data-testid={`team-${agent.id}`}
-        onChange={(event) => onMode(event.target.checked ? defaultWorkMode(agent.kind) : 'off')}
-      />
-      <label htmlFor={`team-${agent.id}`}>{agent.name}</label>
-      <select
-        aria-label={`Режим: ${agent.name}`}
-        value={on ? mode : defaultWorkMode(agent.kind)}
-        disabled={!on}
-        onChange={(event) => onMode(event.target.value as WorkMode)}
-      >
-        <option value="ask">Вопрос</option>
-        <option value="plan">План</option>
-        <option value="agent">Агент</option>
-      </select>
-    </div>
-  )
-}
-
 function TaskCard({
   task,
   names,
   onMove,
 }: {
   task: BoardTask
-  names: Map<string, string>
+  names: Map<string, Agent>
   onMove: (status: BoardStatus) => void
 }) {
   const expectsPlan = task.plan !== null || task.team.some((member) => member.mode === 'plan')
@@ -221,7 +407,7 @@ function TaskCard({
       ? task.activity
       : task.team.map((member) => ({
           agentId: member.agentId,
-          agentName: names.get(member.agentId) ?? 'Агент',
+          agentName: names.get(member.agentId)?.name ?? 'Агент',
           mode: member.mode,
           state: 'waiting' as const,
           note: '',
@@ -239,6 +425,12 @@ function TaskCard({
     >
       <h2>{task.title}</h2>
       {task.description ? <p>{task.description}</p> : null}
+      {task.projectLabel ? (
+        <p className="hint" data-testid="task-card-project">
+          Проект: {task.projectLabel}
+          {task.workflowName ? ` · процесс «${task.workflowName}»` : ''}
+        </p>
+      ) : null}
       <ul className="member-list">
         {rows.map((member) => (
           <li key={member.agentId} className={`member-line ${member.state}`}>

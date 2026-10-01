@@ -57,6 +57,7 @@ export class RunsController {
       task?: unknown;
       roleIds?: unknown;
       projectPath?: unknown;
+      projectId?: unknown;
       mapPath?: unknown;
       deepThinking?: unknown;
     };
@@ -80,6 +81,13 @@ export class RunsController {
       throw new BadRequestException('Папка проекта должна быть строкой.');
     }
     if (
+      record.projectId !== undefined &&
+      record.projectId !== null &&
+      typeof record.projectId !== 'string'
+    ) {
+      throw new BadRequestException('projectId должен быть строкой.');
+    }
+    if (
       record.mapPath !== undefined &&
       record.mapPath !== null &&
       typeof record.mapPath !== 'string'
@@ -96,6 +104,8 @@ export class RunsController {
       roleIds: roleIds as string[] | undefined,
       projectPath:
         typeof record.projectPath === 'string' ? record.projectPath : null,
+      projectId:
+        typeof record.projectId === 'string' ? record.projectId : null,
       mapPath: typeof record.mapPath === 'string' ? record.mapPath : null,
       deepThinking: record.deepThinking === true,
     });

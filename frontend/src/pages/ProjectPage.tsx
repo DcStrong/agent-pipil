@@ -1,9 +1,11 @@
-/** Отдельный экран папки проекта. Правила, навыки и MCP пишутся в .cursor. API Cursor не вызывается. */
+/** Проекты на сервере и правка .cursor в выбранной папке. */
 import { useEffect, useState, type FormEvent } from 'react'
 import { api, messageOf } from '../api'
 import { IconPlus } from '../components/Icons'
-import type { CursorFileItem, CursorFileKind, CursorProjectView, CursorRecommendation } from '../types'
+import { useLive } from '../live'
+import type { CursorFileItem, CursorFileKind, CursorProjectView, CursorRecommendation, SavedProjectKind } from '../types'
 
+const SELECTED_PROJECT_KEY = 'pipil-selected-project'
 const STORAGE_KEY = 'pipil-project-folder'
 
 function storedFolder(): string {
@@ -14,7 +16,14 @@ function storedFolder(): string {
   }
 }
 
-/** Тот же текст, что пишет сервер. На экране он выключен, пока файл не запишут. */
+function storedSelectedProject(): string {
+  try {
+    return sessionStorage.getItem(SELECTED_PROJECT_KEY) ?? ''
+  } catch {
+    return ''
+  }
+}
+
 const SUGGESTION: CursorRecommendation = {
   id: 'machine-runs',
   title: 'Запуски на машине пользователя',
@@ -67,6 +76,7 @@ function itemsOf(view: CursorProjectView, kind: CursorFileKind): CursorFileItem[
 }
 
 export function ProjectPage() {
+  const { cursor, projects, upsertProject, removeProject } = useLive()
   const [pathInput, setPathInput] = useState(storedFolder)
   const [folder, setFolder] = useState<string | null>(null)
   const [view, setView] = useState<CursorProjectView | null>(null)
@@ -74,9 +84,12 @@ export function ProjectPage() {
   const [error, setError] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [addKind, setAddKind] = useState<SavedProjectKind>('folder')
+  const [addPath, setAddPath] = useState('')
+  const [selectedProjectId, setSelectedProjectId] = useState(storedSelectedProject)
+  const [aliasDraft, setAliasDraft] = useState<Record<string, string>>({})
 
   useEffect(() => {
-    // Только чтение каталога. Рекомендация от этого запроса не записывается.
     void load(storedFolder(), false)
   }, [])
 
@@ -92,7 +105,7 @@ export function ProjectPage() {
         try {
           sessionStorage.setItem(STORAGE_KEY, nextFolder.trim())
         } catch {
-          // Папка останется в поле, даже если браузер не хранит сессию.
+          // Папка останется в поле.
         }
       }
       return next
@@ -108,6 +121,77 @@ export function ProjectPage() {
     event.preventDefault()
     setEditor(null)
     await load(pathInput, false)
+  }
+
+  async function addSavedProject(event: FormEvent) {
+    event.preventDefault()
+    setBusy(true)
+    setError(null)
+    setNote(null)
+    try {
+      const created = await api.addProject({ kind: addKind, path: addPath })
+      upsertProject(created)
+      setAddPath('')
+      setNote(
+        addKind === 'folder'
+          ? `Папка «${created.folderName}» добавлена в список на сервере.`
+          : `Workspace «${created.folderName}» добавлен в список на сервере.`,
+      )
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function saveAlias(id: string) {
+    const alias = aliasDraft[id] ?? ''
+    setBusy(true)
+    setError(null)
+    try {
+      upsertProject(await api.updateProjectAlias(id, alias))
+      setNote('Алиас сохранён.')
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function dropProject(id: string) {
+    setBusy(true)
+    setError(null)
+    try {
+      await api.removeProject(id)
+      removeProject(id)
+      if (selectedProjectId === id) {
+        setSelectedProjectId('')
+        try {
+          sessionStorage.removeItem(SELECTED_PROJECT_KEY)
+        } catch {
+          // ignore
+        }
+      }
+      setNote('Запись убрана из списка.')
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function pickForRun(id: string) {
+    setSelectedProjectId(id)
+    try {
+      sessionStorage.setItem(SELECTED_PROJECT_KEY, id)
+    } catch {
+      // ignore
+    }
+    const picked = projects.find((item) => item.id === id)
+    if (picked?.kind === 'folder') {
+      setPathInput(picked.path)
+      void load(picked.path, false)
+    }
   }
 
   function beginCreate(kind: CursorFileKind) {
@@ -174,11 +258,7 @@ export function ProjectPage() {
     setNote(null)
     try {
       const written = await api.addRecommendation(folder)
-      setView((current) =>
-        current
-          ? { ...current, recommendation: written }
-          : current,
-      )
+      setView((current) => (current ? { ...current, recommendation: written } : current))
       setNote(`Правило записано в ${written.relativePath}. До кнопки его в проекте не было.`)
       await load(folder, true)
     } catch (reason) {
@@ -196,9 +276,88 @@ export function ProjectPage() {
     <div className="page">
       <h1 className="page-title">Проект</h1>
       <p className="page-lead" data-testid="cursor-disconnected">
-        Три группы из папки проекта: правила Cursor, навыки и конфигурация MCP. Сохранение пишет файлы в{' '}
-        <code>.cursor</code> этой папки. Живой API Cursor не вызывается, подключение остаётся выключенным.
+        Список локальных папок и файлов <code>.code-workspace</code> хранится на сервере. Для живого шага Cursor
+        выберите проект ниже и сохраните API-токен в настройках
+        {cursor?.connected ? ' (подключён)' : ' (не подключён — шаг Cursor завершится ошибкой)'}.
       </p>
+
+      <section className="card" data-testid="saved-projects">
+        <h2>Сохранённые проекты</h2>
+        <form className="path-bar" onSubmit={(event) => void addSavedProject(event)}>
+          <label className="field">
+            <span>Тип</span>
+            <select
+              data-testid="project-kind"
+              value={addKind}
+              onChange={(event) => setAddKind(event.target.value as SavedProjectKind)}
+            >
+              <option value="folder">Папка</option>
+              <option value="workspace">Cursor workspace (.code-workspace)</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Путь на этой машине</span>
+            <input
+              data-testid="project-add-path"
+              value={addPath}
+              placeholder={addKind === 'folder' ? '/path/to/project' : '/path/to/team.code-workspace'}
+              autoComplete="off"
+              onChange={(event) => setAddPath(event.target.value)}
+            />
+          </label>
+          <button type="submit" className="primary" data-testid="add-project" disabled={busy || !addPath.trim()}>
+            Добавить
+          </button>
+        </form>
+        {projects.length === 0 ? (
+          <p className="empty">Пока нет сохранённых проектов.</p>
+        ) : (
+          <ul className="file-list">
+            {projects.map((item) => (
+              <li key={item.id}>
+                <div className="file-row" data-testid="saved-project-row">
+                  <div>
+                    <strong data-testid="project-label">{item.label}</strong>
+                    <small>
+                      {item.kind === 'workspace' ? 'workspace' : 'папка'} · имя: {item.folderName} · {item.path}
+                    </small>
+                  </div>
+                  <label className="field inline">
+                    <span>Алиас</span>
+                    <input
+                      data-testid="project-alias"
+                      value={aliasDraft[item.id] ?? item.alias}
+                      placeholder={item.folderName}
+                      onChange={(event) =>
+                        setAliasDraft((current) => ({ ...current, [item.id]: event.target.value }))
+                      }
+                    />
+                  </label>
+                  <div className="row-actions">
+                    <button type="button" disabled={busy} onClick={() => void saveAlias(item.id)}>
+                      Сохранить алиас
+                    </button>
+                    <button
+                      type="button"
+                      className={selectedProjectId === item.id ? 'primary' : undefined}
+                      data-testid="select-project"
+                      disabled={busy}
+                      onClick={() => pickForRun(item.id)}
+                    >
+                      {selectedProjectId === item.id ? 'Выбран для запуска' : 'Выбрать для запуска'}
+                    </button>
+                    <button type="button" data-testid="remove-project" disabled={busy} onClick={() => void dropProject(item.id)}>
+                      Убрать
+                    </button>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <h2 className="section-title">Файлы .cursor</h2>
       <form className="path-bar" onSubmit={(event) => void show(event)}>
         <label className="field">
           <span>Папка проекта</span>
@@ -220,7 +379,7 @@ export function ProjectPage() {
           {view && !view.available ? '. Папка не найдена, списки пустые.' : ''}
         </p>
       ) : (
-        <p className="where">Укажите папку и нажмите «Показать». Пока папки нет, файлы не читаются и не пишутся.</p>
+        <p className="where">Укажите папку и нажмите «Показать», чтобы править .cursor.</p>
       )}
       {error ? <p className="error-line">{error}</p> : null}
       {note ? <p className="ok-line">{note}</p> : null}
@@ -313,15 +472,11 @@ export function ProjectPage() {
                   Закрыть
                 </button>
               </div>
-              <p className="where">Файл появится на диске только после этой кнопки.</p>
             </form>
           ) : (
             <>
               <h2>Файл</h2>
-              <p className="where">
-                Откройте строку в списке или добавьте новую. Черновик не записывается, пока не нажмёте «Сохранить в
-                .cursor».
-              </p>
+              <p className="where">Откройте строку в списке или добавьте новую.</p>
             </>
           )}
         </section>
@@ -337,9 +492,6 @@ export function ProjectPage() {
             </span>
           </div>
           <p>{recommendation.text}</p>
-          <p className="where" data-testid="recommendation-path">
-            Файл: <code>{recommendation.relativePath}</code>
-          </p>
           <div className="row-actions">
             <button
               type="button"
@@ -351,11 +503,6 @@ export function ProjectPage() {
               {recommendation.added ? 'Уже в .cursor' : 'Записать в .cursor'}
             </button>
           </div>
-          <p className="where">
-            {recommendation.added
-              ? 'Правило уже лежит в проекте. Его можно открыть в списке правил и поправить. Само оно больше не перезаписывается.'
-              : 'Это только предложение. Кнопка «Записать в .cursor» создаёт файл. Само правило не включается.'}
-          </p>
         </article>
       </section>
     </div>

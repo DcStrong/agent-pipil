@@ -9,7 +9,7 @@ import type {
   RunStep,
   TaskPlan,
 } from '../domain';
-import { CursorClient, hasLocalCursorSession } from './cursor-client';
+import { CursorClient } from './cursor-client';
 import { writeProjectMap } from './project-folder';
 import { briefLine, roleTurn } from './role-turn';
 import { SimulatedAgent } from './simulated-agent';
@@ -159,7 +159,14 @@ export class Orchestrator {
   async execute(
     run: Run,
     publish: (run: Run) => void,
-    options: { delayMs?: number; cursorConnected: boolean; live: boolean },
+    options: {
+      delayMs?: number;
+      cursorConnected: boolean;
+      live: boolean;
+      cursorToken: string | null;
+      projectFolder: string | null;
+      workspaceFile: string | null;
+    },
   ): Promise<void> {
     this.liveRuns.set(run.id, run);
     try {
@@ -180,7 +187,14 @@ export class Orchestrator {
   private async executeSteps(
     run: Run,
     publish: (run: Run) => void,
-    options: { delayMs?: number; cursorConnected: boolean; live: boolean },
+    options: {
+      delayMs?: number;
+      cursorConnected: boolean;
+      live: boolean;
+      cursorToken: string | null;
+      projectFolder: string | null;
+      workspaceFile: string | null;
+    },
   ): Promise<void> {
     const delayMs = options.delayMs ?? readDelayMs();
     const tell = () => publish(structuredClone(run));
@@ -270,7 +284,13 @@ export class Orchestrator {
     incoming: HandoffBrief | null,
     tell: () => void,
     delayMs: number,
-    options: { cursorConnected: boolean; live: boolean },
+    options: {
+      cursorConnected: boolean;
+      live: boolean;
+      cursorToken: string | null;
+      projectFolder: string | null;
+      workspaceFile: string | null;
+    },
   ): Promise<HandoffBrief | null> {
     if (this.halted.has(run.id)) {
       this.markHalted(run);
@@ -283,16 +303,14 @@ export class Orchestrator {
     run.stepIndex = index;
     run.pendingQuestion = null;
     run.updatedAt = started;
-    const localSession = hasLocalCursorSession();
     const viaCursor = step.harness === 'cursor';
-    const sessionNote = localSession
-      ? ' Локальная сессия Cursor уже есть, сеть всё равно не вызывается.'
-      : '';
     const note = viaCursor
-      ? options.cursorConnected
-        ? `${step.agentName} ведёт «${step.title}». Токен сохранён, диалог идёт имитацией.${sessionNote}`
-        : `${step.agentName} ведёт «${step.title}». Cursor не подключён, диалог идёт имитацией.${sessionNote}`
-      : `${step.agentName} открыл новый диалог «${step.title}».${sessionNote}`;
+      ? options.live
+        ? `${step.agentName} ведёт «${step.title}» через Cloud Agents API Cursor.`
+        : !options.cursorConnected
+          ? `${step.agentName} не может вызвать Cursor: токен не задан.`
+          : `${step.agentName} не может вызвать Cursor: живой режим выключен (CURSOR_LIVE=0).`
+      : `${step.agentName} открыл новый диалог «${step.title}».`;
     run.events.push({
       id: randomUUID(),
       at: started,
@@ -309,14 +327,62 @@ export class Orchestrator {
       return step.brief;
     }
 
-    if (viaCursor && options.live && this.cursor.liveEnabled()) {
-      await this.cursor.runStep();
+    if (viaCursor) {
+      if (!options.cursorConnected || !options.cursorToken) {
+        throw new Error(
+          'Нельзя выполнить шаг Cursor: API-токен не сохранён на сервере. Задайте токен в настройках.',
+        );
+      }
+      if (!options.live || !this.cursor.liveEnabled()) {
+        throw new Error(
+          'Нельзя выполнить шаг Cursor: живой вызов отключён переменной CURSOR_LIVE=0 на сервере.',
+        );
+      }
     }
 
     const passes = run.work.filter(
       (item) => item.stepId === step.stepId,
     ).length;
-    const first = await this.speak(run, step, index, incoming, null, passes);
+    let first;
+    if (viaCursor && options.live) {
+      const cursorResult = await this.cursor.runStep({
+        token: options.cursorToken!,
+        task: run.task,
+        stepTitle: step.title,
+        agentName: step.agentName,
+        instructions: step.instructions,
+        skills: step.skills,
+        projectFolder: options.projectFolder,
+        workspaceFile: options.workspaceFile,
+      });
+      const link =
+        cursorResult.agentUrl != null
+          ? ` Ссылка: ${cursorResult.agentUrl}.`
+          : '';
+      run.events.push({
+        id: randomUUID(),
+        at: new Date().toISOString(),
+        kind: 'progress',
+        message: `Cursor ответил на «${step.title}».${link}`,
+        stepIndex: index,
+      });
+      tell();
+      first = {
+        text: cursorResult.text,
+        handoff: {
+          goal: run.task.split('\n')[0] ?? run.task,
+          decided: cursorResult.text.slice(0, 240),
+          now: step.handoff || 'Дальше по процессу.',
+        },
+        mapAddition: null,
+        question: null,
+        shape: 'none' as ReturnShape,
+        sentBack: false,
+        fixedTest: false,
+      };
+    } else {
+      first = await this.speak(run, step, index, incoming, null, passes);
+    }
     if (this.halted.has(run.id)) {
       this.markHalted(run);
       tell();

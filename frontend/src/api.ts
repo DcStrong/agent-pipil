@@ -4,6 +4,8 @@ import type {
   BoardStatus,
   BoardTask,
   CursorConnection,
+  SavedProject,
+  SavedProjectKind,
   CursorFileDocument,
   CursorFileKind,
   CursorProjectView,
@@ -93,7 +95,13 @@ export const api = {
   startRun: (
     workflowId: string,
     task: string,
-    options?: { roleIds?: string[]; projectPath?: string; mapPath?: string; deepThinking?: boolean },
+    options?: {
+      roleIds?: string[]
+      projectPath?: string
+      projectId?: string
+      mapPath?: string
+      deepThinking?: boolean
+    },
   ) =>
     request<Run>('/api/runs', {
       method: 'POST',
@@ -102,10 +110,20 @@ export const api = {
         task,
         roleIds: options?.roleIds,
         projectPath: options?.projectPath ?? null,
+        projectId: options?.projectId ?? null,
         mapPath: options?.mapPath ?? null,
         deepThinking: options?.deepThinking === true,
       }),
     }),
+  projects: () => request<SavedProject[]>('/api/projects'),
+  addProject: (body: { kind: SavedProjectKind; path: string }) =>
+    request<SavedProject>('/api/projects', { method: 'POST', body: JSON.stringify(body) }),
+  updateProjectAlias: (id: string, alias: string) =>
+    request<SavedProject>(`/api/projects/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ alias }),
+    }),
+  removeProject: (id: string) => request<{ ok: true }>(`/api/projects/${id}`, { method: 'DELETE' }),
   saveRunPlan: (id: string, plan: TaskPlan) =>
     request<Run>(`/api/runs/${id}/plan`, {
       method: 'POST',
@@ -130,8 +148,13 @@ export const api = {
     }),
   clearCursor: () => request<CursorConnection>('/api/settings/cursor', { method: 'DELETE' }),
   board: () => request<BoardTask[]>('/api/board'),
-  createTask: (body: { title: string; description: string; team: TeamMember[] }) =>
-    request<BoardTask>('/api/board', { method: 'POST', body: JSON.stringify(body) }),
+  createTask: (body: {
+    title: string
+    description: string
+    projectId: string
+    team?: TeamMember[]
+    workflowId?: string
+  }) => request<BoardTask>('/api/board', { method: 'POST', body: JSON.stringify(body) }),
   moveTask: (id: string, status: BoardStatus) =>
     request<BoardTask>(`/api/board/${id}/move`, { method: 'POST', body: JSON.stringify({ status }) }),
   saveBoardPlan: (id: string, text: string) =>

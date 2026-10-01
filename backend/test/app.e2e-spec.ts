@@ -2,7 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
@@ -16,6 +16,36 @@ process.env.DATA_PATH = join(
 process.env.SIM_DELAY_MS = '0';
 delete process.env.CURSOR_API_TOKEN;
 delete process.env.CURSOR_LIVE;
+
+function installCursorFetchMock(): void {
+  const original = globalThis.fetch;
+  globalThis.fetch = jest.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes('/v1/agents') && init?.method === 'POST') {
+      return {
+        ok: true,
+        status: 201,
+        json: async () => ({
+          agent: { id: 'bc-e2e-agent', url: 'https://cursor.com/agents/bc-e2e-agent' },
+          run: { id: 'run-e2e-1' },
+        }),
+      } as Response;
+    }
+    if (url.includes('/runs/run-e2e-1')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          status: 'FINISHED',
+          result: 'E2E: шаг Cursor выполнен.',
+        }),
+      } as Response;
+    }
+    if (original) return original(url, init);
+    throw new Error(`unexpected fetch ${url}`);
+  }) as typeof fetch;
+}
+
+installCursorFetchMock();
 
 describe('Оркестратор (e2e)', () => {
   let app: INestApplication<App>;
@@ -63,10 +93,25 @@ describe('Оркестратор (e2e)', () => {
 
     await request(server).delete('/api/settings/cursor').expect(200);
 
+    await request(server)
+      .put('/api/settings/cursor')
+      .send({ token: secret })
+      .expect(200);
+
+    const project = await request(server)
+      .post('/api/projects')
+      .send({ kind: 'folder', path: dirname(process.env.DATA_PATH!) })
+      .expect(201);
+    const projectId = project.body.id as string;
+
     const started = (
       await request(server)
         .post('/api/runs')
-        .send({ workflowId: workflow?.id, task: 'Добавить экспорт в webp' })
+        .send({
+          workflowId: workflow?.id,
+          task: 'Добавить экспорт в webp',
+          projectId,
+        })
         .expect(201)
     ).body as Run;
 
@@ -110,11 +155,22 @@ describe('Оркестратор (e2e)', () => {
       .send({ token: secret })
       .expect(200);
 
+    const listed = await request(server).get('/api/projects').expect(200);
+    let projectId = (listed.body as Array<{ id: string }>)[0]?.id;
+    if (!projectId) {
+      const project = await request(server)
+        .post('/api/projects')
+        .send({ kind: 'folder', path: dirname(process.env.DATA_PATH!) })
+        .expect(201);
+      projectId = project.body.id as string;
+    }
+
     const created = await request(server)
       .post('/api/board')
       .send({
         title: 'Доска',
         description: 'Нужен план до сборки',
+        projectId,
         team: [
           { agentId: 'role_architect', mode: 'plan' },
           { agentId: 'agent_builder', mode: 'agent' },
@@ -125,6 +181,7 @@ describe('Оркестратор (e2e)', () => {
       .post('/api/board')
       .send({
         title: 'Только вопрос',
+        projectId,
         team: [{ agentId: 'role_analyst', mode: 'ask' }],
       })
       .expect(201);
@@ -137,6 +194,11 @@ describe('Оркестратор (e2e)', () => {
       .expect(201);
     expect(moved.body.status).toBe('in_progress');
     expect(moved.body.activity[0].note).toContain('Взял задачу');
+    expect(moved.body.runId).toBeTruthy();
+    const pipeline = await request(server)
+      .get(`/api/runs/${moved.body.runId as string}`)
+      .expect(200);
+    expect(pipeline.body.project?.folder).toBeTruthy();
     expect(JSON.stringify(moved.body)).not.toContain(secret);
 
     await request(server)
@@ -186,6 +248,12 @@ describe('Оркестратор (e2e)', () => {
     }
     expect(current.status).toBe('review');
     expect(current.plan?.text).toBe(edited);
+
+    const linked = await request(server).get(`/api/board/${created.body.id}`).expect(200);
+    const runId = linked.body.runId as string | null;
+    if (runId) {
+      await request(server).post(`/api/runs/${runId}/stop`).expect(201);
+    }
 
     await request(server)
       .post(`/api/board/${asked.body.id}/move`)
