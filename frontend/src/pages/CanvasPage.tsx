@@ -442,6 +442,28 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
     }
   }
 
+  async function stopLive() {
+    if (!live) return
+    setBusy(true)
+    setError(null)
+    try {
+      upsertRun(await api.stop(live.id))
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function continueLive() {
+    if (!live) return
+    if (live.status === 'running') {
+      window.location.hash = href({ name: 'run', runId: live.id })
+      return
+    }
+    document.querySelector('[data-testid="run-wait"]')?.scrollIntoView({ block: 'center' })
+  }
+
   const activeStepId = live && live.stepIndex !== null ? live.steps[live.stepIndex]?.stepId ?? null : null
   const doneIds = new Set((shown?.work ?? []).map((item) => item.stepId))
 
@@ -493,6 +515,24 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
         </div>
       </div>
       <aside className="side">
+        {live ? (
+          <section className="busy-run" data-testid="canvas-busy">
+            <p>
+              Процесс занят: запуск «{taskTitle(live.task)}» ещё идёт. Пока он не закончится, холст не правится.
+            </p>
+            <div className="row-actions">
+              <a className="busy-link" data-testid="busy-open" href={href({ name: 'run', runId: live.id })}>
+                Открыть
+              </a>
+              <button type="button" data-testid="busy-continue" onClick={continueLive}>
+                Продолжить
+              </button>
+              <button type="button" data-testid="busy-stop" disabled={busy} onClick={() => void stopLive()}>
+                Остановить
+              </button>
+            </div>
+          </section>
+        ) : null}
         <section className="preset-box" data-testid="preset-panel">
           <h2>Пресет</h2>
           <p className="hint">Готовая цепочка по имени. Текущее дерево можно сохранить и открыть снова.</p>
@@ -660,10 +700,12 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
           </p>
         ) : null}
         {shown?.deepThinking ? (
-          <TaskOrderPanel run={live ?? shown} busy={busy} onSave={savePlan} />
+          <div data-testid={live?.status === 'waiting_plan' ? 'run-wait' : undefined}>
+            <TaskOrderPanel run={live ?? shown} busy={busy} onSave={savePlan} />
+          </div>
         ) : null}
         {live?.status === 'waiting_user' ? (
-          <div className="decision">
+          <div className="decision" data-testid="run-wait">
             <p>Роль задала вопрос. Оркестратор за вас не отвечает, конвейер стоит.</p>
             <p data-testid="pending-question">{live.pendingQuestion}</p>
             <label className="field">
@@ -675,9 +717,14 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
                 onChange={(event) => setAnswer(event.target.value)}
               />
             </label>
-            <button type="button" className="primary" data-testid="send-answer" disabled={busy || !answer.trim()} onClick={() => void sendAnswer()}>
-              Ответить
-            </button>
+            <div className="row-actions">
+              <button type="button" className="primary decision-btn" data-testid="send-answer" disabled={busy || !answer.trim()} onClick={() => void sendAnswer()}>
+                Ответить
+              </button>
+              <button type="button" className="decision-btn" data-testid="reject-question" disabled={busy} onClick={() => void decide('reject')}>
+                Отклонить
+              </button>
+            </div>
           </div>
         ) : null}
         {openedStep ? (
@@ -710,7 +757,7 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
           </p>
         ) : null}
         {live?.status === 'waiting_approval' ? (
-          <div className="decision">
+          <div className="decision" data-testid="run-wait">
             <p>Шаг ждёт вашего подтверждения. Пока вы не решите, задача не идёт дальше.</p>
             <div className="row-actions">
               <button type="button" className="primary decision-btn" data-testid="approve" disabled={busy} onClick={() => void decide('approve')}>

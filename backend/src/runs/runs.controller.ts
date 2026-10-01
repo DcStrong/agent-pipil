@@ -126,6 +126,11 @@ export class RunsController {
     return this.runs.answer(id, text);
   }
 
+  @Post(':id/stop')
+  stop(@Param('id') id: string): Run {
+    return this.runs.stop(id);
+  }
+
   @Post(':id/decision')
   decide(@Param('id') id: string, @Body() body: unknown): Run {
     if (typeof body !== 'object' || body === null || Array.isArray(body)) {

@@ -120,6 +120,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ decision }),
     }),
+  stop: (id: string) => request<Run>(`/api/runs/${id}/stop`, { method: 'POST' }),
   cursor: () => request<CursorConnection>('/api/settings/cursor'),
   saveCursor: (token: string) =>
     request<CursorConnection>('/api/settings/cursor', {

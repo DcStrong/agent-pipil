@@ -133,6 +133,9 @@ export class RunsService {
 
   decide(id: string, approved: boolean): Run {
     const current = this.get(id);
+    if (!approved && current.status === 'waiting_user') {
+      return this.haltOpen(id, 'Владелец отклонил вопрос.');
+    }
     if (current.status !== 'waiting_approval') {
       throw new BadRequestException('Этот запуск не ждёт подтверждения.');
     }
@@ -140,7 +143,18 @@ export class RunsService {
     if (!accepted) {
       throw new BadRequestException('Подтверждение уже некому передать.');
     }
+    const live = this.orchestrator.peek(id);
+    if (live) this.publishLive(live);
     return this.get(id);
+  }
+
+  /** Заканчивает открытый запуск, чтобы холст снова можно было править. */
+  stop(id: string): Run {
+    const current = this.get(id);
+    if (!this.isOpenStatus(current.status)) {
+      throw new BadRequestException('Этот запуск уже закончен.');
+    }
+    return this.haltOpen(id, 'Запуск остановлен.');
   }
 
   /** Кладёт поправленный план и отпускает сборку. */
@@ -189,6 +203,47 @@ export class RunsService {
       throw new BadRequestException('Ответ уже некому передать.');
     }
     return this.get(id);
+  }
+
+  private haltOpen(id: string, reason: string): Run {
+    const live = this.orchestrator.requestHalt(id, reason);
+    if (live && (live.status === 'failed' || live.status === 'completed')) {
+      this.publishLive(live);
+      return this.get(id);
+    }
+    const again = this.get(id);
+    if (!this.isOpenStatus(again.status)) return again;
+    const at = new Date().toISOString();
+    again.status = 'failed';
+    again.error = reason;
+    again.pendingQuestion = null;
+    again.finishedAt = at;
+    again.updatedAt = at;
+    again.events.push({
+      id: randomUUID(),
+      at,
+      kind: 'error',
+      message: reason,
+      stepIndex: again.stepIndex,
+    });
+    this.store.upsertRun(again);
+    this.updates.next({ type: 'run', run: structuredClone(again) });
+    return this.get(id);
+  }
+
+  private publishLive(run: Run): void {
+    const snapshot = structuredClone(run);
+    this.store.upsertRun(snapshot);
+    this.updates.next({ type: 'run', run: snapshot });
+  }
+
+  private isOpenStatus(status: Run['status']): boolean {
+    return (
+      status === 'running' ||
+      status === 'waiting_approval' ||
+      status === 'waiting_user' ||
+      status === 'waiting_plan'
+    );
   }
 
   private planField(value: unknown, label: string): string {

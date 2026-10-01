@@ -123,16 +123,21 @@ export function RunPage({ runId }: { runId: string }) {
           ))}
         {run.deepThinking ? <TaskOrderPanel run={run} busy={busy} onSave={savePlan} /> : null}
         {run.status === 'waiting_user' ? (
-          <div className="decision">
+          <div className="decision" data-testid="run-wait">
             <p>Роль ждёт ответа. Оркестратор за вас не отвечает.</p>
             <p>{run.pendingQuestion}</p>
             <label className="field">
               <span>Ответ</span>
               <textarea data-testid="user-answer" value={answer} onChange={(event) => setAnswer(event.target.value)} />
             </label>
-            <button type="button" className="primary" data-testid="send-answer" disabled={busy || !answer.trim()} onClick={() => void sendAnswer()}>
-              Ответить
-            </button>
+            <div className="row-actions">
+              <button type="button" className="primary decision-btn" data-testid="send-answer" disabled={busy || !answer.trim()} onClick={() => void sendAnswer()}>
+                Ответить
+              </button>
+              <button type="button" className="decision-btn" data-testid="reject-question" disabled={busy} onClick={() => void decide('reject')}>
+                Отклонить
+              </button>
+            </div>
           </div>
         ) : null}
         {run.status === 'waiting_approval' ? (
