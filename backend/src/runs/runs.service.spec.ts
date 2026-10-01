@@ -138,6 +138,61 @@ describe('RunsService', () => {
     expect(finished.finalResult).toBeNull();
   });
 
+  it('отказ от вопроса завершает запуск и не считает шагов больше, чем их есть', async () => {
+    const { runs } = await make();
+    const started = runs.start(
+      'workflow_supervised',
+      'Нужен массив объектов заказов',
+      {
+        roleIds: ['role_architect', 'role_developer', 'role_tester'],
+      },
+    );
+    const waiting = await until(runs, started.id, 'waiting_user');
+    expect(waiting.status).toBe('waiting_user');
+    expect(waiting.pendingQuestion).toContain('массив');
+    expect(waiting.work.length).toBeLessThanOrEqual(waiting.steps.length);
+
+    const rejected = runs.decide(started.id, false);
+    expect(rejected.status).toBe('failed');
+    expect(rejected.error).toContain('отклонил вопрос');
+    expect(rejected.pendingQuestion).toBeNull();
+    expect(rejected.finishedAt).toBeTruthy();
+    expect(rejected.work.length).toBeLessThanOrEqual(rejected.steps.length);
+
+    await settle();
+    const finished = runs.get(started.id);
+    expect(finished.status).toBe('failed');
+    expect(finished.work.length).toBeLessThanOrEqual(finished.steps.length);
+    const known = new Set(finished.steps.map((step) => step.stepId));
+    const seen = new Set(
+      finished.work
+        .map((item) => item.stepId)
+        .filter((id) => known.has(id)),
+    );
+    expect(seen.size).toBeLessThanOrEqual(finished.steps.length);
+    expect(runs.list().some((run) => run.id === started.id && run.status === 'waiting_user')).toBe(
+      false,
+    );
+  });
+
+  it('остановка незавершённого запуска снимает блокировку процесса', async () => {
+    const { runs } = await make();
+    const started = runs.start(
+      'workflow_supervised',
+      'Нужен массив объектов заказов',
+      { roleIds: ['role_architect'] },
+    );
+    await until(runs, started.id, 'waiting_user');
+    const stopped = runs.stop(started.id);
+    expect(stopped.status).toBe('failed');
+    expect(stopped.error).toContain('остановлен');
+    await settle();
+    const finished = runs.get(started.id);
+    expect(finished.status).toBe('failed');
+    expect(finished.work.length).toBeLessThanOrEqual(finished.steps.length);
+    expect(() => runs.stop(started.id)).toThrow('уже закончен');
+  });
+
   it('сохраняет токен Cursor и не возвращает его целиком', async () => {
     const { settings } = await make();
     const secret = 'cursor_live_token_value';
@@ -288,6 +343,12 @@ describe('RunsService', () => {
     expect(
       done.work.filter((item) => item.stepId === developer?.stepId),
     ).toHaveLength(2);
+    const known = new Set(done.steps.map((step) => step.stepId));
+    const seen = new Set(
+      done.work.filter((item) => known.has(item.stepId)).map((item) => item.stepId),
+    );
+    expect(seen.size).toBeLessThanOrEqual(done.steps.length);
+    expect(seen.size).toBeLessThan(done.work.length);
     expect(done.mapWritten).toBe(true);
     const map = await readFile(join(root, '.pipil', 'карта.md'), 'utf8');
     expect(map).toContain('Владение');

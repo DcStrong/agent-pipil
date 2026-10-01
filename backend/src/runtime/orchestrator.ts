@@ -94,6 +94,10 @@ export class Orchestrator {
   private readonly gates = new Map<string, (approved: boolean) => void>();
   private readonly answers = new Map<string, (text: string) => void>();
   private readonly plans = new Map<string, (plan: TaskPlan) => void>();
+  /** Тот же объект, который ведёт цикл. Останов пишет в него сразу, не дожидаясь микрозадачи. */
+  private readonly liveRuns = new Map<string, Run>();
+  /** Текст, которым владелец оборвал запуск. Пока он есть, цикл не идёт дальше. */
+  private readonly halted = new Map<string, string>();
   private readonly simulated = new SimulatedAgent();
   private readonly cursor = new CursorClient();
 
@@ -103,9 +107,35 @@ export class Orchestrator {
   decide(runId: string, approved: boolean): boolean {
     const resolve = this.gates.get(runId);
     if (!resolve) return false;
+    if (!approved) {
+      const run = this.liveRuns.get(runId);
+      if (run) {
+        this.halted.set(runId, 'Владелец отклонил шаг.');
+        this.markHalted(run);
+      }
+    }
     this.gates.delete(runId);
     resolve(approved);
     return true;
+  }
+
+  /** Живой запуск, если цикл ещё его держит. */
+  peek(runId: string): Run | null {
+    return this.liveRuns.get(runId) ?? null;
+  }
+
+  /**
+   * Обрывает ожидание и сразу помечает запуск неуспешным.
+   * Возвращает живой объект или null, если цикла уже нет.
+   */
+  requestHalt(runId: string, reason: string): Run | null {
+    const run = this.liveRuns.get(runId);
+    if (!run) return null;
+    if (run.status === 'completed' || run.status === 'failed') return run;
+    this.halted.set(runId, reason);
+    this.markHalted(run);
+    this.releaseWaiters(runId);
+    return run;
   }
 
   /** Кладёт ответ владельца в диалог роли, которая спросила. */
@@ -131,10 +161,27 @@ export class Orchestrator {
     publish: (run: Run) => void,
     options: { delayMs?: number; cursorConnected: boolean; live: boolean },
   ): Promise<void> {
-    if (run.deepThinking) {
-      await this.executeDeep(run, publish, options.delayMs ?? readDelayMs());
-      return;
+    this.liveRuns.set(run.id, run);
+    try {
+      if (run.deepThinking) {
+        await this.executeDeep(run, publish, options.delayMs ?? readDelayMs());
+        return;
+      }
+      await this.executeSteps(run, publish, options);
+    } finally {
+      this.liveRuns.delete(run.id);
+      this.halted.delete(run.id);
+      this.gates.delete(run.id);
+      this.answers.delete(run.id);
+      this.plans.delete(run.id);
     }
+  }
+
+  private async executeSteps(
+    run: Run,
+    publish: (run: Run) => void,
+    options: { delayMs?: number; cursorConnected: boolean; live: boolean },
+  ): Promise<void> {
     const delayMs = options.delayMs ?? readDelayMs();
     const tell = () => publish(structuredClone(run));
     let incoming: HandoffBrief | null = null;
@@ -155,7 +202,7 @@ export class Orchestrator {
           delayMs,
           options,
         );
-        if (run.status === 'failed') return;
+        if (run.status === 'failed' || this.halted.has(run.id)) return;
         const sendBack =
           step.kind === 'tester' &&
           step.brief?.now.startsWith('Разработчику вернуть');
@@ -191,6 +238,11 @@ export class Orchestrator {
       });
       tell();
     } catch (error) {
+      if (this.halted.has(run.id)) {
+        this.markHalted(run);
+        tell();
+        return;
+      }
       const failedAt = new Date().toISOString();
       this.gates.delete(run.id);
       this.answers.delete(run.id);
@@ -220,6 +272,11 @@ export class Orchestrator {
     delayMs: number,
     options: { cursorConnected: boolean; live: boolean },
   ): Promise<HandoffBrief | null> {
+    if (this.halted.has(run.id)) {
+      this.markHalted(run);
+      tell();
+      return incoming;
+    }
     const step = run.steps[index];
     const started = new Date().toISOString();
     run.status = 'running';
@@ -246,6 +303,11 @@ export class Orchestrator {
     if (incoming) say(step, 'handoff', briefLine(incoming));
     tell();
     await sleep(delayMs);
+    if (this.halted.has(run.id)) {
+      this.markHalted(run);
+      tell();
+      return step.brief;
+    }
 
     if (viaCursor && options.live && this.cursor.liveEnabled()) {
       await this.cursor.runStep();
@@ -255,6 +317,11 @@ export class Orchestrator {
       (item) => item.stepId === step.stepId,
     ).length;
     const first = await this.speak(run, step, index, incoming, null, passes);
+    if (this.halted.has(run.id)) {
+      this.markHalted(run);
+      tell();
+      return step.brief;
+    }
     say(step, 'role', first.text);
     step.mapAddition = first.mapAddition;
     if (first.shape !== 'none') run.developerShape = first.shape;
@@ -279,6 +346,13 @@ export class Orchestrator {
       const answer = await new Promise<string>((resolve) => {
         this.answers.set(run.id, resolve);
       });
+      if (this.halted.has(run.id)) {
+        // Отказ от вопроса не дописывает работу и не пускает роли дальше.
+        // Иначе возврат разработчику добавил бы проходы сверх списка шагов.
+        this.markHalted(run);
+        tell();
+        return step.brief;
+      }
       const answeredAt = new Date().toISOString();
       say(step, 'user', answer.trim());
       run.status = 'running';
@@ -300,6 +374,11 @@ export class Orchestrator {
         answer.trim(),
         passes,
       );
+      if (this.halted.has(run.id)) {
+        this.markHalted(run);
+        tell();
+        return step.brief;
+      }
       say(step, 'role', second.text);
       step.brief = second.handoff;
       step.mapAddition = second.mapAddition ?? step.mapAddition;
@@ -329,6 +408,11 @@ export class Orchestrator {
       });
       tell();
       await sleep(Math.min(delayMs, 400));
+      if (this.halted.has(run.id)) {
+        this.markHalted(run);
+        tell();
+        return step.brief;
+      }
     } else {
       tell();
     }
@@ -379,6 +463,8 @@ export class Orchestrator {
     output: string,
   ): void {
     const finished = new Date().toISOString();
+    // Повторный проход (тестировщик вернул задачу) остаётся в журнале отдельной записью.
+    // В прогресс он не входит: на экране считают разные шаги, не число записей.
     run.work.push({
       stepId: step.stepId,
       agentId: step.agentId,
@@ -410,6 +496,11 @@ export class Orchestrator {
     const approved = await new Promise<boolean>((resolve) => {
       this.gates.set(run.id, resolve);
     });
+    if (this.halted.has(run.id)) {
+      this.markHalted(run);
+      tell();
+      return true;
+    }
     const decidedAt = new Date().toISOString();
     run.updatedAt = decidedAt;
     if (!approved) {
@@ -464,7 +555,7 @@ export class Orchestrator {
 
       const note = lookNote(run.task, run.project);
       run.note = note;
-      await this.showPiece(
+      const noted = await this.showPiece(
         run,
         'ask',
         note,
@@ -472,6 +563,7 @@ export class Orchestrator {
         tell,
         delayMs,
       );
+      if (!noted) return;
 
       run.plan = draftPlan(run.task);
       this.persistPieces(run);
@@ -493,6 +585,11 @@ export class Orchestrator {
       const edited = await new Promise<TaskPlan>((resolve) => {
         this.plans.set(run.id, resolve);
       });
+      if (this.halted.has(run.id)) {
+        this.markHalted(run);
+        tell();
+        return;
+      }
       run.plan = edited;
       this.persistPieces(run);
       const acceptedAt = new Date().toISOString();
@@ -504,7 +601,7 @@ export class Orchestrator {
         message: 'План принят. Сборка берёт его в контекст.',
         stepIndex: planIndex >= 0 ? planIndex : null,
       });
-      await this.showPiece(
+      const planned = await this.showPiece(
         run,
         'plan',
         formatPlan(edited),
@@ -512,10 +609,11 @@ export class Orchestrator {
         tell,
         delayMs,
       );
+      if (!planned) return;
 
       const built = buildFromPlan(edited);
       run.buildText = built;
-      await this.showPiece(
+      const assembled = await this.showPiece(
         run,
         'build',
         built,
@@ -523,10 +621,11 @@ export class Orchestrator {
         tell,
         delayMs,
       );
+      if (!assembled) return;
 
       const review = reviewAgainst(edited, built);
       run.reviewText = review;
-      await this.showPiece(
+      const reviewed = await this.showPiece(
         run,
         'review',
         review,
@@ -534,6 +633,7 @@ export class Orchestrator {
         tell,
         delayMs,
       );
+      if (!reviewed) return;
 
       const ended = new Date().toISOString();
       run.archive = {
@@ -560,6 +660,11 @@ export class Orchestrator {
       });
       tell();
     } catch (error) {
+      if (this.halted.has(run.id)) {
+        this.markHalted(run);
+        tell();
+        return;
+      }
       const failedAt = new Date().toISOString();
       this.gates.delete(run.id);
       this.answers.delete(run.id);
@@ -589,7 +694,12 @@ export class Orchestrator {
     event: string,
     tell: () => void,
     delayMs: number,
-  ): Promise<void> {
+  ): Promise<boolean> {
+    if (this.halted.has(run.id)) {
+      this.markHalted(run);
+      tell();
+      return false;
+    }
     const index = run.steps.findIndex((step) => step.mode === mode);
     const step = index >= 0 ? run.steps[index] : undefined;
     const at = new Date().toISOString();
@@ -606,19 +716,67 @@ export class Orchestrator {
     if (step) {
       say(step, 'role', text);
       const finished = new Date().toISOString();
-      run.work.push({
-        stepId: step.stepId,
-        agentId: step.agentId,
-        agentName: step.agentName,
-        title: step.title,
-        output: text,
-        summary: text.slice(0, 180),
-        startedAt: at,
-        finishedAt: finished,
-      });
+      // Повтор того же шага не добавляет ещё одну работу: счётчик шагов от этого рос бы выше списка.
+      if (!run.work.some((item) => item.stepId === step.stepId)) {
+        run.work.push({
+          stepId: step.stepId,
+          agentId: step.agentId,
+          agentName: step.agentName,
+          title: step.title,
+          output: text,
+          summary: text.slice(0, 180),
+          startedAt: at,
+          finishedAt: finished,
+        });
+      }
     }
     tell();
     await sleep(delayMs);
+    if (this.halted.has(run.id)) {
+      this.markHalted(run);
+      tell();
+      return false;
+    }
+    return true;
+  }
+
+  /** Ставит причину обрыва один раз. Повторный вызов не дописывает событие. */
+  private markHalted(run: Run): void {
+    const reason = this.halted.get(run.id);
+    if (!reason) return;
+    if (run.status === 'failed' && run.error === reason) return;
+    const at = new Date().toISOString();
+    run.status = 'failed';
+    run.error = reason;
+    run.pendingQuestion = null;
+    run.finishedAt = at;
+    run.updatedAt = at;
+    run.events.push({
+      id: randomUUID(),
+      at,
+      kind: 'error',
+      message: reason,
+      stepIndex: run.stepIndex,
+    });
+  }
+
+  /** Будит ожидание вопроса, проверки или плана, чтобы цикл увидел обрыв. */
+  private releaseWaiters(runId: string): void {
+    const gate = this.gates.get(runId);
+    if (gate) {
+      this.gates.delete(runId);
+      gate(false);
+    }
+    const answer = this.answers.get(runId);
+    if (answer) {
+      this.answers.delete(runId);
+      answer('');
+    }
+    const plan = this.plans.get(runId);
+    if (plan) {
+      this.plans.delete(runId);
+      plan({ why: '', changes: '', how: '', checklist: '' });
+    }
   }
 
   private persistPieces(run: Run): void {
