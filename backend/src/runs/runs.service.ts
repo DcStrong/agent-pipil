@@ -134,9 +134,9 @@ export class RunsService {
       archive: null,
     };
     this.store.upsertRun(run);
-    const cursorConnected = this.settings.hasToken();
+    const cursorMode = this.settings.connectionMode();
+    const cursorConnected = this.settings.cursorReady();
     const live =
-      cursorConnected &&
       this.cursor.liveEnabled() &&
       run.steps.some((step) => step.harness === 'cursor');
     void this.orchestrator
@@ -150,6 +150,7 @@ export class RunsService {
           delayMs: readDelayMs(),
           cursorConnected,
           live,
+          cursorMode,
           cursorToken: this.settings.apiToken(),
           projectFolder: snapshot.folder,
           workspaceFile: snapshot.workspaceFile,

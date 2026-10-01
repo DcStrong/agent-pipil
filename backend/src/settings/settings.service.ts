@@ -1,28 +1,53 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { tokenHint } from '../domain';
+import { tokenHint, type CursorConnectionMode } from '../domain';
+import { isAgentCliAvailable } from '../runtime/cursor-cli';
 import { StoreService } from '../store/store.service';
 
 export interface CursorConnection {
   connected: boolean;
   source: 'none' | 'saved' | 'env';
   hint: string | null;
+  mode: CursorConnectionMode;
 }
 
 @Injectable()
 export class SettingsService {
   constructor(private readonly store: StoreService) {}
 
+  connectionMode(): CursorConnectionMode {
+    return this.store.read().cursorMode;
+  }
+
   /** Публичный вид подключения. Полный токен сюда не попадает. */
   connection(env: NodeJS.ProcessEnv = process.env): CursorConnection {
+    const mode = this.connectionMode();
+    if (mode === 'cli') {
+      return {
+        connected: isAgentCliAvailable(env),
+        source: 'none',
+        hint: null,
+        mode,
+      };
+    }
     const saved = this.store.read().cursorToken;
     if (saved && saved.length >= 8) {
-      return { connected: true, source: 'saved', hint: tokenHint(saved) };
+      return {
+        connected: true,
+        source: 'saved',
+        hint: tokenHint(saved),
+        mode,
+      };
     }
     const fromEnv = env.CURSOR_API_TOKEN?.trim();
     if (fromEnv && fromEnv.length >= 8) {
-      return { connected: true, source: 'env', hint: null };
+      return { connected: true, source: 'env', hint: null, mode };
     }
-    return { connected: false, source: 'none', hint: null };
+    return { connected: false, source: 'none', hint: null, mode };
+  }
+
+  /** Шаг Cursor в текущем режиме можно запускать без ошибки конфигурации. */
+  cursorReady(env: NodeJS.ProcessEnv = process.env): boolean {
+    return this.connection(env).connected;
   }
 
   /** Токен для внутреннего решения «подключён ли Cursor». Наружу не отдаётся. */
@@ -51,6 +76,16 @@ export class SettingsService {
     }
     this.store.mutate((state) => {
       state.cursorToken = trimmed;
+    });
+    return this.connection();
+  }
+
+  setMode(mode: CursorConnectionMode): CursorConnection {
+    if (mode !== 'cli' && mode !== 'api') {
+      throw new BadRequestException('Режим подключения: cli или api.');
+    }
+    this.store.mutate((state) => {
+      state.cursorMode = mode;
     });
     return this.connection();
   }

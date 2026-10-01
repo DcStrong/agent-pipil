@@ -13,6 +13,8 @@ export type AgentKind =
   | 'reviewer'
   | 'custom';
 export type Harness = 'simulated' | 'cursor';
+/** Как backend вызывает Cursor для шагов со средой «Cursor». */
+export type CursorConnectionMode = 'cli' | 'api';
 export type StepMode =
   'automatic' | 'approval' | 'question' | 'ask' | 'plan' | 'build' | 'review';
 export type SkillScope = 'shared' | 'agent';
@@ -232,6 +234,8 @@ export interface State {
   projects: SavedProject[];
   /** Секрет хранится только на сервере и не уходит в браузер целиком. */
   cursorToken: string | null;
+  /** CLI — локальный agent на машине backend; API — Cloud Agents. */
+  cursorMode: CursorConnectionMode;
 }
 
 export interface AgentContext {
@@ -651,6 +655,7 @@ export function createSeedState(): State {
     tasks: [],
     projects: [],
     cursorToken: null,
+    cursorMode: 'cli',
   };
 }
 
@@ -1065,6 +1070,12 @@ export function parseState(value: unknown): State {
   }
   const cursorToken = value.cursorToken;
   if (cursorToken !== null && typeof cursorToken !== 'string') fail('токен');
+  const cursorModeRaw = value.cursorMode;
+  let cursorMode: CursorConnectionMode = 'cli';
+  if (cursorModeRaw !== undefined) {
+    if (cursorModeRaw !== 'cli' && cursorModeRaw !== 'api') fail('режим Cursor');
+    cursorMode = cursorModeRaw;
+  }
   const projectsRaw = value.projects;
   if (projectsRaw !== undefined && !Array.isArray(projectsRaw)) fail('проекты');
   return {
@@ -1078,6 +1089,7 @@ export function parseState(value: unknown): State {
       ? projectsRaw.map(parseSavedProject)
       : [],
     cursorToken,
+    cursorMode,
   };
 }
 

@@ -52,7 +52,7 @@ async function readApiError(response: Response): Promise<string> {
   return `HTTP ${response.status}`;
 }
 
-function buildPrompt(input: CursorStepInput): string {
+export function buildPrompt(input: CursorStepInput): string {
   const lines = [
     `Шаг «${input.stepTitle}», агент «${input.agentName}».`,
     '',
