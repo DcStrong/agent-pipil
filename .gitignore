@@ -1,0 +1,8 @@
+node_modules/
+dist/
+coverage/
+backend/data/*.json
+*.tsbuildinfo
+.DS_Store
+.env
+.env.local
