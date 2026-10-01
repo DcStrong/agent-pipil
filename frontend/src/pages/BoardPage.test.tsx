@@ -60,6 +60,7 @@ function liveState() {
 afterEach(() => {
   cleanup()
   harness.createTask.mockReset()
+  window.location.hash = ''
 })
 
 describe('BoardPage — новая задача', () => {
@@ -173,6 +174,101 @@ describe('BoardPage — новая задача', () => {
       expect(screen.getByTestId('inline-project-save-error').textContent).toContain('Путь не найден'),
     )
     expect(screen.queryByTestId('board-form-error')).toBeNull()
+  })
+
+  it('клик по карточке с запуском открывает страницу запуска', () => {
+    harness.live = {
+      ...liveState(),
+      tasks: [
+        {
+          id: 't-review',
+          title: 'test',
+          description: 'привет',
+          status: 'review',
+          projectId: 'p1',
+          projectLabel: 'myProject',
+          workflowId: 'wf1',
+          workflowName: 'Вопрос',
+          runId: 'run_board_1',
+          team: [{ agentId: 'role_analyst', mode: 'ask' }],
+          phase: 'idle',
+          activity: [
+            {
+              agentId: 'role_analyst',
+              agentName: 'Оркестратор',
+              mode: 'ask',
+              state: 'done',
+              note: 'Оркестратор ответил в режиме вопроса, без плана и без правок.',
+            },
+          ],
+          plan: null,
+          createdAt: '',
+          updatedAt: '',
+        },
+      ],
+    }
+    render(<BoardPage />)
+    fireEvent.click(screen.getByTestId('task-card'))
+    expect(window.location.hash).toBe('#/run/run_board_1')
+  })
+
+  it('клик по карточке без запуска показывает причину на карточке', () => {
+    harness.live = {
+      ...liveState(),
+      tasks: [
+        {
+          id: 't-new',
+          title: 'Черновик',
+          description: '',
+          status: 'new',
+          projectId: 'p1',
+          projectLabel: 'myProject',
+          workflowId: null,
+          workflowName: null,
+          runId: null,
+          team: [{ agentId: 'role_analyst', mode: 'ask' }],
+          phase: 'idle',
+          activity: [],
+          plan: null,
+          createdAt: '',
+          updatedAt: '',
+        },
+      ],
+    }
+    render(<BoardPage />)
+    fireEvent.click(screen.getByTestId('task-card'))
+    expect(window.location.hash).not.toContain('/run/')
+    expect(screen.getByTestId('task-card-open-hint').textContent).toContain('Запуска ещё нет')
+  })
+
+  it('кнопка «В работу» не открывает запуск', () => {
+    harness.live = {
+      ...liveState(),
+      tasks: [
+        {
+          id: 't-new',
+          title: 'Черновик',
+          description: '',
+          status: 'new',
+          projectId: 'p1',
+          projectLabel: 'myProject',
+          workflowId: null,
+          workflowName: null,
+          runId: null,
+          team: [{ agentId: 'role_analyst', mode: 'ask' }],
+          phase: 'idle',
+          activity: [],
+          plan: null,
+          createdAt: '',
+          updatedAt: '',
+        },
+      ],
+    }
+    const before = window.location.hash
+    render(<BoardPage />)
+    fireEvent.click(screen.getByTestId('move-in-progress'))
+    expect(window.location.hash).toBe(before)
+    expect(screen.queryByTestId('task-card-open-hint')).toBeNull()
   })
 
   it('с проектом и агентом создаёт задачу', async () => {

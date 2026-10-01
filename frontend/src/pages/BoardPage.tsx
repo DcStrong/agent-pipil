@@ -1,5 +1,5 @@
 /** Доска из трёх колонок. Перенос в работу запускает выбранную команду. */
-import { useState, type FormEvent, type DragEvent } from 'react'
+import { useRef, useState, type FormEvent, type DragEvent, type MouseEvent } from 'react'
 import { api, messageOf } from '../api'
 import { columnLabel, defaultWorkMode, memberStateLabel, modeLabel } from '../board'
 import { DarkSelect } from '../components/DarkSelect'
@@ -421,6 +421,12 @@ export function BoardPage() {
   )
 }
 
+function taskOpenBlockReason(task: BoardTask): string {
+  if (task.runId) return ''
+  if (task.status === 'new') return 'Запуска ещё нет — сначала переведите задачу в работу.'
+  return 'Запуск для этой задачи пока не создан.'
+}
+
 function TaskCard({
   task,
   names,
@@ -430,6 +436,8 @@ function TaskCard({
   names: Map<string, Agent>
   onMove: (status: BoardStatus) => void
 }) {
+  const skipClick = useRef(false)
+  const [openHint, setOpenHint] = useState<string | null>(null)
   const expectsPlan = task.plan !== null || task.team.some((member) => member.mode === 'plan')
   const rows =
     task.activity.length > 0
@@ -441,15 +449,38 @@ function TaskCard({
           state: 'waiting' as const,
           note: '',
         }))
+
+  function openRun(event: MouseEvent<HTMLElement>) {
+    if (event.defaultPrevented) return
+    if (skipClick.current) {
+      skipClick.current = false
+      return
+    }
+    if (task.runId) {
+      setOpenHint(null)
+      window.location.hash = href({ name: 'run', runId: task.runId })
+      return
+    }
+    setOpenHint(taskOpenBlockReason(task))
+  }
+
   return (
     <article
-      className="task-card"
+      className={task.runId ? 'task-card open-run' : 'task-card'}
       data-testid="task-card"
       data-status={task.status}
+      data-has-run={task.runId ? 'true' : 'false'}
       draggable={task.status === 'new'}
+      onClick={openRun}
       onDragStart={(event) => {
+        skipClick.current = true
         event.dataTransfer.setData('text/plain', task.id)
         event.dataTransfer.effectAllowed = 'move'
+      }}
+      onDragEnd={() => {
+        window.setTimeout(() => {
+          skipClick.current = false
+        }, 0)
       }}
     >
       <h2>{task.title}</h2>
@@ -474,7 +505,16 @@ function TaskCard({
           </li>
         ))}
       </ul>
-      <div className="row-actions">
+      {openHint ? (
+        <p className="task-card-open-hint" data-testid="task-card-open-hint">
+          {openHint}
+        </p>
+      ) : null}
+      <div
+        className="row-actions"
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
+      >
         {task.status === 'new' ? (
           <button type="button" data-testid="move-in-progress" onClick={() => onMove('in_progress')}>
             В работу
