@@ -200,3 +200,42 @@ export interface Health {
 }
 
 export type StreamMessage = { type: 'run'; run: Run } | { type: 'idle' }
+
+export type BoardStatus = 'new' | 'in_progress' | 'review'
+export type WorkMode = 'ask' | 'plan' | 'agent'
+export type BoardPhase = 'idle' | 'working' | 'plan' | 'build' | 'done'
+export type MemberState = 'working' | 'waiting' | 'done'
+
+export interface TeamMember {
+  agentId: string
+  mode: WorkMode
+}
+
+export interface BoardActivity {
+  agentId: string
+  agentName: string
+  mode: WorkMode
+  state: MemberState
+  note: string
+}
+
+export interface BoardPlan {
+  text: string
+  authorAgentId: string
+  authorName: string
+  editable: boolean
+  updatedAt: string
+}
+
+export interface BoardTask {
+  id: string
+  title: string
+  description: string
+  status: BoardStatus
+  team: TeamMember[]
+  phase: BoardPhase
+  activity: BoardActivity[]
+  plan: BoardPlan | null
+  createdAt: string
+  updatedAt: string
+}

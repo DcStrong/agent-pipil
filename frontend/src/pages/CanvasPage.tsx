@@ -359,7 +359,7 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
     setBusy(true)
     setError(null)
     try {
-      upsertRun(await api.savePlan(live.id, plan))
+      upsertRun(await api.saveRunPlan(live.id, plan))
     } catch (reason) {
       setError(messageOf(reason))
     } finally {

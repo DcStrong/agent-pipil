@@ -1,14 +1,20 @@
 /** Узкая тёмная рейка: только экраны, которые реально открываются. */
-import { IconAgent, IconGear, IconNodes, IconRuns } from './Icons'
+import { IconAgent, IconBoard, IconGear, IconNodes, IconRuns } from './Icons'
 import { href, type Route } from '../route'
 
 export function Rail({ route }: { route: Route }) {
-  const items: Array<{ route: Route; label: string; icon: 'nodes' | 'runs' | 'agent'; on: boolean }> = [
+  const items: Array<{ route: Route; label: string; icon: 'nodes' | 'board' | 'runs' | 'agent'; on: boolean }> = [
     {
       route: { name: 'workflows' },
       label: 'Процессы',
       icon: 'nodes',
       on: route.name === 'workflows' || route.name === 'canvas',
+    },
+    {
+      route: { name: 'board' },
+      label: 'Доска',
+      icon: 'board',
+      on: route.name === 'board' || route.name === 'plan',
     },
     {
       route: { name: 'runs' },
@@ -36,6 +42,7 @@ export function Rail({ route }: { route: Route }) {
           aria-current={item.on ? 'page' : undefined}
         >
           {item.icon === 'nodes' ? <IconNodes /> : null}
+          {item.icon === 'board' ? <IconBoard /> : null}
           {item.icon === 'runs' ? <IconRuns /> : null}
           {item.icon === 'agent' ? <IconAgent /> : null}
         </a>

@@ -1,4 +1,6 @@
-/** Модель локального оркестратора: агенты, шаги, точки проверки и запуски. */
+import { parseBoardTasks, type BoardTask } from './board/model';
+
+/** Модель локального оркестратора: агенты, шаги, точки проверки, запуски и доска. */
 
 export type AgentKind =
   | 'orchestrator'
@@ -211,6 +213,8 @@ export interface State {
   /** Встроенные и сохранённые пользователем цепочки. */
   presets: PipelinePreset[];
   runs: Run[];
+  /** Задачи доски. Колонки: new, in_progress, review. */
+  tasks: BoardTask[];
   /** Секрет хранится только на сервере и не уходит в браузер целиком. */
   cursorToken: string | null;
 }
@@ -629,6 +633,7 @@ export function createSeedState(): State {
     ],
     presets: seedPresets(),
     runs: [],
+    tasks: [],
     cursorToken: null,
   };
 }
@@ -1026,6 +1031,7 @@ export function parseState(value: unknown): State {
     workflows: value.workflows.map(parseWorkflow),
     presets: Array.isArray(value.presets) ? value.presets.map(parsePreset) : [],
     runs: value.runs.map(parseRun),
+    tasks: parseBoardTasks(value.tasks),
     cursorToken,
   };
 }

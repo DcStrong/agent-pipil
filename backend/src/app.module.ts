@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AgentsModule } from './agents/agents.module';
 import { AppController } from './app.controller';
+import { BoardModule } from './board/board.module';
 import { PresetsModule } from './presets/presets.module';
 import { RunsModule } from './runs/runs.module';
 import { SettingsModule } from './settings/settings.module';
@@ -17,6 +18,7 @@ import { WorkflowsModule } from './workflows/workflows.module';
     PresetsModule,
     SettingsModule,
     RunsModule,
+    BoardModule,
   ],
   controllers: [AppController],
 })

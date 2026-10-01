@@ -147,10 +147,10 @@ export class RunsService {
   savePlan(
     id: string,
     raw: {
-      why: unknown;
-      changes: unknown;
-      how: unknown;
-      checklist: unknown;
+      why?: unknown;
+      changes?: unknown;
+      how?: unknown;
+      checklist?: unknown;
     },
   ): Run {
     const current = this.get(id);

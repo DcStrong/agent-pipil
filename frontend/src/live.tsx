@@ -1,4 +1,4 @@
-/** Общее состояние экранов: агенты, процессы, запуски и поток событий. */
+/** Общее состояние экранов: агенты, процессы, запуски, доска и поток событий. */
 import {
   createContext,
   useCallback,
@@ -10,7 +10,7 @@ import {
 } from 'react'
 import { api, mergeRun, messageOf, subscribeRuns } from './api'
 import { isOpenRun } from './format'
-import type { Agent, CursorConnection, PipelinePreset, Run, Skill, Workflow } from './types'
+import type { Agent, BoardTask, CursorConnection, PipelinePreset, Run, Skill, Workflow } from './types'
 
 interface LiveValue {
   ready: boolean
@@ -20,9 +20,11 @@ interface LiveValue {
   workflows: Workflow[]
   presets: PipelinePreset[]
   runs: Run[]
+  tasks: BoardTask[]
   cursor: CursorConnection | null
   reload: () => Promise<void>
   upsertRun: (run: Run) => void
+  upsertTask: (task: BoardTask) => void
   /** Кладёт процесс в уже открытый список, без повторной загрузки всей страницы. */
   upsertWorkflow: (workflow: Workflow) => void
   upsertPreset: (preset: PipelinePreset) => void
@@ -37,17 +39,20 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   const [workflows, setWorkflows] = useState<Workflow[]>([])
   const [presets, setPresets] = useState<PipelinePreset[]>([])
   const [runs, setRuns] = useState<Run[]>([])
+  const [tasks, setTasks] = useState<BoardTask[]>([])
   const [cursor, setCursor] = useState<CursorConnection | null>(null)
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const reload = useCallback(async () => {
-    const [nextAgents, nextSkills, nextWorkflows, nextPresets, nextRuns, nextCursor] = await Promise.all([
+    const [nextAgents, nextSkills, nextWorkflows, nextPresets, nextRuns, nextTasks, nextCursor] =
+      await Promise.all([
       api.agents(),
       api.skills(),
       api.workflows(),
       api.presets(),
       api.runs(),
+      api.board(),
       api.cursor(),
     ])
     setAgents(nextAgents)
@@ -55,6 +60,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     setWorkflows(nextWorkflows)
     setPresets(nextPresets)
     setRuns(nextRuns)
+    setTasks(nextTasks)
     setCursor(nextCursor)
     setReady(true)
     setError(null)
@@ -62,6 +68,13 @@ export function LiveProvider({ children }: { children: ReactNode }) {
 
   const upsertRun = useCallback((run: Run) => {
     setRuns((list) => mergeRun(list, run))
+  }, [])
+
+  const upsertTask = useCallback((task: BoardTask) => {
+    setTasks((list) => {
+      const rest = list.filter((item) => item.id !== task.id)
+      return [...rest, task].sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    })
   }, [])
 
   const upsertWorkflow = useCallback((workflow: Workflow) => {
@@ -117,6 +130,19 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     return () => window.clearInterval(timer)
   }, [active])
 
+  const boardLive = tasks.some((task) => task.phase === 'working' || task.phase === 'build')
+
+  useEffect(() => {
+    if (!boardLive) return
+    const timer = window.setInterval(() => {
+      void api
+        .board()
+        .then((fresh) => setTasks(fresh))
+        .catch(() => undefined)
+    }, 400)
+    return () => window.clearInterval(timer)
+  }, [boardLive])
+
   const value = useMemo<LiveValue>(
     () => ({
       ready,
@@ -126,9 +152,11 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       workflows,
       presets,
       runs,
+      tasks,
       cursor,
       reload,
       upsertRun,
+      upsertTask,
       upsertWorkflow,
       upsertPreset,
       removePreset,
@@ -141,9 +169,11 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       workflows,
       presets,
       runs,
+      tasks,
       cursor,
       reload,
       upsertRun,
+      upsertTask,
       upsertWorkflow,
       upsertPreset,
       removePreset,

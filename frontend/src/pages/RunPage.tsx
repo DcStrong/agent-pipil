@@ -34,7 +34,7 @@ export function RunPage({ runId }: { runId: string }) {
     setBusy(true)
     setError(null)
     try {
-      upsertRun(await api.savePlan(run.id, plan))
+      upsertRun(await api.saveRunPlan(run.id, plan))
     } catch (reason) {
       setError(messageOf(reason))
     } finally {
