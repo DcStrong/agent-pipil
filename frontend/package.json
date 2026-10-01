@@ -13,7 +13,8 @@
   "dependencies": {
     "motion": "^13.4.6",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "uuid": "^14.0.2"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.3",
