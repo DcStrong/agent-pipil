@@ -168,32 +168,6 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
     )
   }
 
-  function toggleAgent(agent: Agent, on: boolean) {
-    if (locked) return
-    if (on) {
-      place(agent, 'sequence', 'tail')
-      return
-    }
-    const base = materialize(steps)
-    const dropping = new Set(base.filter((step) => step.agentId === agent.id).map((step) => step.id))
-    if (base.length - dropping.size < 1) {
-      setError('В процессе нужен хотя бы один шаг.')
-      return
-    }
-    const kept = base
-      .filter((step) => !dropping.has(step.id))
-      .map((step) => ({
-        ...step,
-        nextIds: step.nextIds.flatMap((id) => {
-          if (!dropping.has(id)) return [id]
-          const removed = base.find((item) => item.id === id)
-          return (removed?.nextIds ?? []).filter((child) => !dropping.has(child) && child !== step.id)
-        }),
-      }))
-    commit(kept)
-    if (selected && dropping.has(selected)) setSelected(kept[0]?.id ?? null)
-  }
-
   /** Пример подставляет текст и флажки ролей. Запуск отсюда не начинается. */
   function applyExample(exampleId: ExampleId, nextTask: string, nextPicked: string[]) {
     setExample(exampleId)
@@ -268,17 +242,25 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
     )
   }
 
+  function removeStepBlockReason(): string | null {
+    if (locked) return 'Пока идёт запуск, шаг не убирают.'
+    if (!selectedStep) return 'Сначала выберите шаг на холсте.'
+    if (graph.length < 2) return 'В процессе нужен хотя бы один шаг.'
+    return null
+  }
+
   function removeSelected() {
-    if (!selectedStep || locked || graph.length < 2) return
+    if (removeStepBlockReason()) return
     const base = materialize(steps)
-    const dropping = selectedStep.id
+    const dropping = selectedStep!.id
     const kept = base
       .filter((step) => step.id !== dropping)
       .map((step) => ({
         ...step,
-        nextIds: step.nextIds.flatMap((id) => (id === dropping ? selectedStep.nextIds : [id])),
+        nextIds: step.nextIds.flatMap((id) => (id === dropping ? selectedStep!.nextIds : [id])),
       }))
-    commit(kept, kept[0]?.id)
+    const parent = base.find((step) => step.nextIds.includes(dropping))
+    commit(kept, parent?.id ?? kept[0]?.id)
   }
 
   async function save() {
@@ -467,6 +449,7 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
 
   const activeStepId = live && live.stepIndex !== null ? live.steps[live.stepIndex]?.stepId ?? null : null
   const doneIds = new Set((shown?.work ?? []).map((item) => item.stepId))
+  const removeBlocked = selectedStep ? removeStepBlockReason() : null
 
   return (
     <div className="canvas-page">
@@ -597,18 +580,16 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
           ) : null}
           {palette.map((agent) => (
             <div className="role-row" key={agent.id}>
-              <input
-                id={`pick-${agent.id}`}
-                type="checkbox"
-                data-testid={TASK_ROLES.includes(agent.kind) ? `role-${agent.kind}` : `role-pick-${agent.id}`}
-                checked={steps.some((step) => step.agentId === agent.id)}
+              <span className="role-name">{agent.name}</span>
+              <button
+                type="button"
+                className="text-btn"
+                data-testid={
+                  TASK_ROLES.includes(agent.kind) ? `role-more-${agent.kind}` : `role-more-${agent.id}`
+                }
                 disabled={locked}
-                onChange={(event) => toggleAgent(agent, event.target.checked)}
-              />
-              <label className="role-name" htmlFor={`pick-${agent.id}`}>
-                {agent.name}
-              </label>
-              <button type="button" className="text-btn" disabled={locked} onClick={() => place(agent, 'sequence')}>
+                onClick={() => place(agent, 'sequence')}
+              >
                 Ещё
               </button>
             </div>
@@ -851,9 +832,21 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
               >
                 {linking ? 'Выберите шаг на холсте' : 'Связать с соседом'}
               </button>
-              <button type="button" disabled={locked || graph.length < 2} onClick={removeSelected}>
-                Удалить
+            </div>
+            <div className="row-actions" data-testid="remove-step-row">
+              <button
+                type="button"
+                data-testid="remove-step"
+                disabled={Boolean(removeBlocked)}
+                onClick={removeSelected}
+              >
+                Убрать шаг
               </button>
+              {removeBlocked ? (
+                <p className="hint" data-testid="remove-step-reason">
+                  {removeBlocked}
+                </p>
+              ) : null}
             </div>
           </section>
         ) : null}
