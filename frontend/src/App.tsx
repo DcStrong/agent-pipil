@@ -1,4 +1,4 @@
-/** Оболочка: тёмная рейка и экраны процессов, холста, запусков и агентов. */
+/** Оболочка: тёмная рейка и экраны процессов, холста, запусков, агентов и проекта. */
 import { useEffect } from 'react'
 import { Rail } from './components/Rail'
 import { LiveProvider } from './live'
@@ -8,6 +8,7 @@ import { BoardPage } from './pages/BoardPage'
 import { CanvasPage } from './pages/CanvasPage'
 import { PlanPage } from './pages/PlanPage'
 import { RunPage } from './pages/RunPage'
+import { ProjectPage } from './pages/ProjectPage'
 import { RunsPage } from './pages/RunsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { WorkflowsPage } from './pages/WorkflowsPage'
@@ -22,6 +23,7 @@ const titles: Record<Route['name'], string> = {
   run: 'Запуск',
   agents: 'Агенты',
   agent: 'Агент',
+  project: 'Проект',
   settings: 'Настройки',
 }
 
@@ -53,6 +55,7 @@ function Shell() {
         {route.name === 'run' ? <RunPage runId={route.runId} /> : null}
         {route.name === 'agents' ? <AgentsPage /> : null}
         {route.name === 'agent' ? <AgentPage agentId={route.agentId} /> : null}
+        {route.name === 'project' ? <ProjectPage /> : null}
         {route.name === 'settings' ? <SettingsPage /> : null}
       </main>
     </div>

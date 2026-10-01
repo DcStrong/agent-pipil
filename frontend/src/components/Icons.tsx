@@ -41,6 +41,14 @@ export function IconAgent({ className }: IconProps) {
   )
 }
 
+export function IconFolder({ className }: IconProps) {
+  return (
+    <Svg className={className}>
+      <path d="M3.5 8.2V7.1A1.6 1.6 0 0 1 5.1 5.5h3.7l1.7 1.7h8.4a1.6 1.6 0 0 1 1.6 1.6v7.6a1.6 1.6 0 0 1-1.6 1.6H5.1a1.6 1.6 0 0 1-1.6-1.6V8.2Z" />
+    </Svg>
+  )
+}
+
 export function IconGear({ className }: IconProps) {
   return (
     <Svg className={className}>

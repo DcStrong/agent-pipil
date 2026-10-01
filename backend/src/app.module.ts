@@ -3,6 +3,7 @@ import { AgentsModule } from './agents/agents.module';
 import { AppController } from './app.controller';
 import { BoardModule } from './board/board.module';
 import { PresetsModule } from './presets/presets.module';
+import { ProjectCursorModule } from './project/project-cursor.module';
 import { RunsModule } from './runs/runs.module';
 import { SettingsModule } from './settings/settings.module';
 import { SkillsModule } from './skills/skills.module';
@@ -17,6 +18,7 @@ import { WorkflowsModule } from './workflows/workflows.module';
     WorkflowsModule,
     PresetsModule,
     SettingsModule,
+    ProjectCursorModule,
     RunsModule,
     BoardModule,
   ],
