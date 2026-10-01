@@ -3,18 +3,26 @@ import { useState } from 'react'
 import { api, messageOf } from '../api'
 import { IconNodes, IconPlus } from '../components/Icons'
 import { SetupModal } from '../components/SetupModal'
-import { agentOnline, progress, statusLabel, taskTitle, when } from '../format'
+import { agentOnline, isOpenRun, progress, statusLabel, taskTitle, when } from '../format'
 import { useLive } from '../live'
 import { href } from '../route'
-import type { PipelinePreset } from '../types'
+import type { PipelinePreset, Run, Workflow } from '../types'
+
+function workflowDeleteBlockReason(workflowId: string, runs: Run[]): string | null {
+  const active = runs.some((run) => run.workflowId === workflowId && isOpenRun(run.status))
+  if (active) return 'Сначала остановите или дождитесь завершения активного запуска.'
+  return null
+}
 
 export function WorkflowsPage() {
-  const { ready, error, workflows, agents, runs, cursor, presets, upsertWorkflow, removePreset } = useLive()
+  const { ready, error, workflows, agents, runs, cursor, presets, upsertWorkflow, removeWorkflow, removePreset } =
+    useLive()
   const [setup, setSetup] = useState(false)
   const [opening, setOpening] = useState<string | null>(null)
-  const [removing, setRemoving] = useState<string | null>(null)
+  const [removingPreset, setRemovingPreset] = useState<string | null>(null)
+  const [removingWorkflow, setRemovingWorkflow] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
-  const busy = opening !== null || removing !== null
+  const busy = opening !== null || removingPreset !== null || removingWorkflow !== null
   const connected = cursor?.connected ?? false
   const online = agents.filter((agent) => agentOnline(agent, connected)).length
 
@@ -34,7 +42,7 @@ export function WorkflowsPage() {
 
   async function dropPreset(preset: PipelinePreset) {
     if (preset.builtin) return
-    setRemoving(preset.id)
+    setRemovingPreset(preset.id)
     setActionError(null)
     try {
       await api.deletePreset(preset.id)
@@ -42,7 +50,21 @@ export function WorkflowsPage() {
     } catch (reason) {
       setActionError(messageOf(reason))
     } finally {
-      setRemoving(null)
+      setRemovingPreset(null)
+    }
+  }
+
+  async function dropWorkflow(workflow: Workflow) {
+    if (workflowDeleteBlockReason(workflow.id, runs)) return
+    setRemovingWorkflow(workflow.id)
+    setActionError(null)
+    try {
+      await api.deleteWorkflow(workflow.id)
+      removeWorkflow(workflow.id)
+    } catch (reason) {
+      setActionError(messageOf(reason))
+    } finally {
+      setRemovingWorkflow(null)
     }
   }
 
@@ -108,24 +130,43 @@ export function WorkflowsPage() {
                 <p>Добавьте шаги агентов и точки проверки. Задачи запускаются с доски.</p>
               </div>
             ) : (
-              workflows.map((workflow) => (
-                <a
-                  key={workflow.id}
-                  className="preview link"
-                  href={href({ name: 'canvas', workflowId: workflow.id })}
-                  data-testid="workflow-card"
-                >
-                  <span className="mini" aria-hidden="true">
-                    {workflow.steps.map((step) => (
-                      <span key={step.id} className="mini-node">
-                        {step.title}
+              workflows.map((workflow) => {
+                const blockReason = workflowDeleteBlockReason(workflow.id, runs)
+                return (
+                  <article key={workflow.id} className="workflow-tile" data-testid={`workflow-tile-${workflow.id}`}>
+                    <a
+                      className="preview link"
+                      href={href({ name: 'canvas', workflowId: workflow.id })}
+                      data-testid="workflow-card"
+                    >
+                      <span className="mini" aria-hidden="true">
+                        {workflow.steps.map((step) => (
+                          <span key={step.id} className="mini-node">
+                            {step.title}
+                          </span>
+                        ))}
                       </span>
-                    ))}
-                  </span>
-                  <strong>{workflow.name}</strong>
-                  <p>{workflow.description}</p>
-                </a>
-              ))
+                      <strong>{workflow.name}</strong>
+                      <p>{workflow.description}</p>
+                    </a>
+                    {blockReason ? (
+                      <p className="preset-guard" data-testid={`${workflow.id}-remove-hint`}>
+                        {blockReason}
+                      </p>
+                    ) : (
+                      <button
+                        type="button"
+                        className="text-btn"
+                        data-testid={`${workflow.id}-remove`}
+                        disabled={busy}
+                        onClick={() => void dropWorkflow(workflow)}
+                      >
+                        Удалить
+                      </button>
+                    )}
+                  </article>
+                )
+              })
             )}
           </section>
           <section className="card">

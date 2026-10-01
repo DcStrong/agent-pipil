@@ -71,6 +71,7 @@ export const api = {
     id: string,
     body: { name: string; description: string; steps: WorkflowStep[] },
   ) => request<Workflow>(`/api/workflows/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  deleteWorkflow: (id: string) => request<{ ok: true }>(`/api/workflows/${id}`, { method: 'DELETE' }),
   presets: () => request<PipelinePreset[]>('/api/presets'),
   createPreset: (body: {
     name: string
