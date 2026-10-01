@@ -1,5 +1,6 @@
 /** Форма новой задачи: проект обязателен, нужны агенты или процесс. */
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { api } from '../api'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Agent, BoardTask } from '../types'
 import { BoardPage } from './BoardPage'
@@ -19,6 +20,7 @@ vi.mock('../api', () => ({
     moveTask: vi.fn(),
     addProject: vi.fn(),
     updateProjectAlias: vi.fn(),
+    pickProjectPath: vi.fn(),
   },
   messageOf: (error: unknown) => (error instanceof Error ? error.message : 'ошибка'),
 }))
@@ -69,6 +71,34 @@ describe('BoardPage — новая задача', () => {
     fireEvent.click(screen.getByTestId('create-task'))
     expect(screen.getByTestId('board-form-error').textContent).toContain('проект')
     expect(harness.createTask).not.toHaveBeenCalled()
+  })
+
+  it('без вложенной form: подсказка и кнопки исполнителей не ломают разметку', () => {
+    harness.live = liveState()
+    const { container } = render(<BoardPage />)
+    fireEvent.click(screen.getByTestId('new-task'))
+    fireEvent.click(screen.getByTestId('toggle-add-project'))
+    expect(container.querySelector('form.compose form')).toBeNull()
+    const team = container.querySelector('#compose-team')?.closest('.team-pick')
+    expect(team).not.toBeNull()
+    const hint = within(team as HTMLElement).getByText(/Либо отдельные агенты/)
+    const addAgent = within(team as HTMLElement).getByTestId('add-agent')
+    expect(hint.compareDocumentPosition(addAgent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('кнопка «Выбрать» подставляет путь в поле проекта', async () => {
+    harness.live = { ...liveState(), projects: [] }
+    vi.mocked(api.pickProjectPath).mockResolvedValue({ path: '/home/user/proj' })
+    render(<BoardPage />)
+    fireEvent.click(screen.getByTestId('new-task'))
+    fireEvent.click(screen.getByTestId('toggle-add-project'))
+    fireEvent.click(screen.getByTestId('inline-pick-project-path'))
+    await waitFor(() =>
+      expect((screen.getByTestId('inline-project-path') as HTMLInputElement).value).toBe(
+        '/home/user/proj',
+      ),
+    )
+    expect(api.pickProjectPath).toHaveBeenCalledWith({ kind: 'folder' })
   })
 
   it('с проектом и агентом создаёт задачу', async () => {

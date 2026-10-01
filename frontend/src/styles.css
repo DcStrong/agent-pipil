@@ -929,7 +929,34 @@ code { font-family: ui-monospace, monospace; font-size: 0.92em; }
   flex: none;
 }
 .board-head .primary svg { width: 16px; height: 16px; }
-.compose { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.compose {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: min(68vh, 640px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  flex-shrink: 1;
+  min-height: 0;
+}
+.path-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.path-input-row input {
+  flex: 1;
+  min-width: 0;
+}
+.path-pick-btn {
+  flex: none;
+  white-space: nowrap;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #101012;
+}
 .picker-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .picker-list button { width: 100%; text-align: left; padding: 8px 10px; border-radius: 8px; border: 1px solid #2a2a30; background: #141418; color: inherit; cursor: pointer; }
 .picker-list small { display: block; opacity: 0.7; margin-top: 2px; }
@@ -942,15 +969,23 @@ code { font-family: ui-monospace, monospace; font-size: 0.92em; }
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
 }
-.team-pick legend {
+.team-pick-title {
+  margin: 0;
   color: var(--faint);
   font-size: 11px;
   font-weight: 650;
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-.team-pick .hint { margin: 0; }
+.team-pick .hint {
+  margin: 0;
+  padding: 0;
+}
+.team-pick .row-actions {
+  margin-top: 2px;
+}
 .team-row {
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) 132px;

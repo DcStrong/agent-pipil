@@ -7,8 +7,13 @@ import {
   Param,
   Patch,
   Post,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import type { SavedProjectKind } from '../domain';
+import {
+  NativePathPickerUnavailable,
+  pickNativePath,
+} from '../runtime/native-path-picker';
 import { ProjectsService, type SavedProjectView } from './projects.service';
 
 @Controller('projects')
@@ -18,6 +23,29 @@ export class ProjectsController {
   @Get()
   list(): SavedProjectView[] {
     return this.projects.list();
+  }
+
+  @Post('pick-path')
+  async pickPath(
+    @Body() body: unknown,
+  ): Promise<{ cancelled: true } | { path: string }> {
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      throw new BadRequestException('Ожидался JSON-объект.');
+    }
+    const kind = (body as { kind?: unknown }).kind;
+    if (kind !== 'folder' && kind !== 'workspace') {
+      throw new BadRequestException('kind: folder или workspace.');
+    }
+    try {
+      const outcome = await pickNativePath(kind as SavedProjectKind);
+      if (outcome.cancelled) return { cancelled: true };
+      return { path: outcome.path };
+    } catch (reason) {
+      if (reason instanceof NativePathPickerUnavailable) {
+        throw new ServiceUnavailableException(reason.message);
+      }
+      throw reason;
+    }
   }
 
   @Post()
