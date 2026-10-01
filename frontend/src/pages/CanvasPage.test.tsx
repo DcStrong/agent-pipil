@@ -153,6 +153,14 @@ afterEach(() => {
 })
 
 describe('Холст: роли, «Следом», «Ответвить» и уборка шага', () => {
+  it('не показывает поле задачи и кнопку «Запустить» — запуск только с доски', async () => {
+    await open([])
+    expect(screen.queryByTestId('task-input')).toBeNull()
+    expect(screen.queryByTestId('start-run')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Запустить' })).toBeNull()
+    expect(screen.getByTestId('canvas-config-hint').textContent).toContain('доске')
+  })
+
   it('в блоке ролей нет флажков добавления в конец списка', async () => {
     await open([])
     const roles = screen.getByTestId('roles-panel')
