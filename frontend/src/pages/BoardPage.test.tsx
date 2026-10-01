@@ -69,7 +69,8 @@ describe('BoardPage — новая задача', () => {
     fireEvent.click(screen.getByTestId('new-task'))
     fireEvent.change(screen.getByTestId('task-title'), { target: { value: 'Задача' } })
     fireEvent.click(screen.getByTestId('create-task'))
-    expect(screen.getByTestId('board-form-error').textContent).toContain('проект')
+    expect(screen.getByTestId('task-project-hint').textContent).toContain('проект')
+    expect(screen.queryByTestId('board-form-error')).toBeNull()
     expect(harness.createTask).not.toHaveBeenCalled()
   })
 
@@ -99,6 +100,94 @@ describe('BoardPage — новая задача', () => {
       ),
     )
     expect(api.pickProjectPath).toHaveBeenCalledWith({ kind: 'folder' })
+  })
+
+  it('сохранение проекта из формы сразу выбирает его для задачи', async () => {
+    const upsertProject = vi.fn((project: ReturnType<typeof liveState>['projects'][number]) => {
+      const list = harness.live.projects
+      const index = list.findIndex((item) => item.id === project.id)
+      const projects =
+        index === -1
+          ? [...list, project]
+          : list.map((item, i) => (i === index ? project : item))
+      harness.live = { ...harness.live, projects }
+    })
+    harness.live = { ...liveState(), projects: [], upsertProject }
+    vi.mocked(api.addProject).mockResolvedValue({
+      id: 'saved-1',
+      kind: 'folder',
+      path: '/Users/dc_strong/myProject',
+      folderName: 'myProject',
+      alias: '',
+      label: 'myProject',
+    })
+    vi.mocked(api.updateProjectAlias).mockResolvedValue({
+      id: 'saved-1',
+      kind: 'folder',
+      path: '/Users/dc_strong/myProject',
+      folderName: 'myProject',
+      alias: '123',
+      label: '123',
+    })
+    harness.createTask.mockResolvedValue({
+      id: 't1',
+      title: 'test',
+      description: '123',
+      status: 'new',
+      projectId: 'saved-1',
+      projectLabel: '123',
+      workflowId: null,
+      workflowName: null,
+      team: [{ agentId: 'role_analyst', mode: 'ask' }],
+      phase: 'idle',
+      activity: [],
+      plan: null,
+      createdAt: '',
+      updatedAt: '',
+    })
+    render(<BoardPage />)
+    fireEvent.click(screen.getByTestId('new-task'))
+    fireEvent.change(screen.getByTestId('task-title'), { target: { value: 'test' } })
+    fireEvent.change(screen.getByTestId('task-body'), { target: { value: '123' } })
+    fireEvent.click(screen.getByTestId('toggle-add-project'))
+    fireEvent.change(screen.getByTestId('inline-project-path'), {
+      target: { value: '/Users/dc_strong/myProject' },
+    })
+    fireEvent.change(screen.getByTestId('inline-project-alias'), { target: { value: '123' } })
+    fireEvent.click(screen.getByTestId('create-task'))
+    expect(screen.getByTestId('task-project-hint').textContent).toContain('проект')
+    fireEvent.click(screen.getByTestId('save-inline-project'))
+    await waitFor(() => expect(api.addProject).toHaveBeenCalled())
+    await waitFor(() => expect(screen.getByTestId('task-project-label')).toBeTruthy())
+    expect(screen.getByTestId('task-project-label').textContent).toContain('123')
+    expect(screen.queryByTestId('task-project-hint')).toBeNull()
+    expect(screen.queryByTestId('board-form-error')).toBeNull()
+    fireEvent.click(screen.getByTestId('add-agent'))
+    fireEvent.click(screen.getByText('Аналитик'))
+    fireEvent.click(screen.getByTestId('create-task'))
+    await waitFor(() => expect(harness.createTask).toHaveBeenCalled())
+    expect(harness.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'test',
+        projectId: 'saved-1',
+      }),
+    )
+  })
+
+  it('ошибка сохранения проекта показывается рядом с кнопкой', async () => {
+    harness.live = { ...liveState(), projects: [] }
+    vi.mocked(api.addProject).mockRejectedValue(new Error('Путь не найден на этой машине.'))
+    render(<BoardPage />)
+    fireEvent.click(screen.getByTestId('new-task'))
+    fireEvent.click(screen.getByTestId('toggle-add-project'))
+    fireEvent.change(screen.getByTestId('inline-project-path'), {
+      target: { value: '/missing/path' },
+    })
+    fireEvent.click(screen.getByTestId('save-inline-project'))
+    await waitFor(() =>
+      expect(screen.getByTestId('inline-project-error').textContent).toContain('не найден'),
+    )
+    expect(screen.queryByTestId('board-form-error')).toBeNull()
   })
 
   it('с проектом и агентом создаёт задачу', async () => {
