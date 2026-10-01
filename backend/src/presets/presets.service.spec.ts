@@ -10,6 +10,7 @@ import {
   type Run,
   type StepMode,
 } from '../domain';
+import { ProjectsService } from '../projects/projects.service';
 import { RunsService } from '../runs/runs.service';
 import { SettingsService } from '../settings/settings.service';
 import { StoreService } from '../store/store.service';
@@ -60,6 +61,7 @@ describe('PresetsService', () => {
       providers: [
         PresetsService,
         RunsService,
+        ProjectsService,
         SettingsService,
         StoreService,
         { provide: DATA_PATH, useValue: join(directory, 'state.json') },

@@ -10,7 +10,16 @@ import {
 } from 'react'
 import { api, mergeRun, messageOf, subscribeRuns } from './api'
 import { isOpenRun } from './format'
-import type { Agent, BoardTask, CursorConnection, PipelinePreset, Run, Skill, Workflow } from './types'
+import type {
+  Agent,
+  BoardTask,
+  CursorConnection,
+  PipelinePreset,
+  Run,
+  SavedProject,
+  Skill,
+  Workflow,
+} from './types'
 
 interface LiveValue {
   ready: boolean
@@ -22,7 +31,10 @@ interface LiveValue {
   runs: Run[]
   tasks: BoardTask[]
   cursor: CursorConnection | null
+  projects: SavedProject[]
   reload: () => Promise<void>
+  upsertProject: (project: SavedProject) => void
+  removeProject: (id: string) => void
   upsertRun: (run: Run) => void
   upsertTask: (task: BoardTask) => void
   /** Кладёт процесс в уже открытый список, без повторной загрузки всей страницы. */
@@ -41,12 +53,21 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   const [runs, setRuns] = useState<Run[]>([])
   const [tasks, setTasks] = useState<BoardTask[]>([])
   const [cursor, setCursor] = useState<CursorConnection | null>(null)
+  const [projects, setProjects] = useState<SavedProject[]>([])
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const reload = useCallback(async () => {
-    const [nextAgents, nextSkills, nextWorkflows, nextPresets, nextRuns, nextTasks, nextCursor] =
-      await Promise.all([
+    const [
+      nextAgents,
+      nextSkills,
+      nextWorkflows,
+      nextPresets,
+      nextRuns,
+      nextTasks,
+      nextCursor,
+      nextProjects,
+    ] = await Promise.all([
       api.agents(),
       api.skills(),
       api.workflows(),
@@ -54,6 +75,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       api.runs(),
       api.board(),
       api.cursor(),
+      api.projects(),
     ])
     setAgents(nextAgents)
     setSkills(nextSkills)
@@ -62,6 +84,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     setRuns(nextRuns)
     setTasks(nextTasks)
     setCursor(nextCursor)
+    setProjects(nextProjects)
     setReady(true)
     setError(null)
   }, [])
@@ -99,6 +122,20 @@ export function LiveProvider({ children }: { children: ReactNode }) {
 
   const removePreset = useCallback((id: string) => {
     setPresets((list) => list.filter((item) => item.id !== id))
+  }, [])
+
+  const upsertProject = useCallback((project: SavedProject) => {
+    setProjects((list) => {
+      const index = list.findIndex((item) => item.id === project.id)
+      if (index === -1) return [...list, project]
+      const next = list.slice()
+      next[index] = project
+      return next
+    })
+  }, [])
+
+  const removeProject = useCallback((id: string) => {
+    setProjects((list) => list.filter((item) => item.id !== id))
   }, [])
 
   useEffect(() => {
@@ -154,12 +191,15 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       runs,
       tasks,
       cursor,
+      projects,
       reload,
       upsertRun,
       upsertTask,
       upsertWorkflow,
       upsertPreset,
       removePreset,
+      upsertProject,
+      removeProject,
     }),
     [
       ready,
@@ -171,12 +211,15 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       runs,
       tasks,
       cursor,
+      projects,
       reload,
       upsertRun,
       upsertTask,
       upsertWorkflow,
       upsertPreset,
       removePreset,
+      upsertProject,
+      removeProject,
     ],
   )
 

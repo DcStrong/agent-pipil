@@ -13,6 +13,7 @@ import { orderSteps } from '../runtime/step-graph';
 import { CursorClient } from '../runtime/cursor-client';
 import { Orchestrator, readDelayMs } from '../runtime/orchestrator';
 import { inspectProject } from '../runtime/project-folder';
+import { ProjectsService } from '../projects/projects.service';
 import { SettingsService } from '../settings/settings.service';
 import { StoreService } from '../store/store.service';
 
@@ -27,6 +28,7 @@ export class RunsService {
   constructor(
     private readonly store: StoreService,
     private readonly settings: SettingsService,
+    private readonly projects: ProjectsService,
   ) {}
 
   list(): Run[] {
@@ -58,6 +60,7 @@ export class RunsService {
     options?: {
       roleIds?: string[];
       projectPath?: string | null;
+      projectId?: string | null;
       mapPath?: string | null;
       deepThinking?: boolean;
     },
@@ -76,6 +79,11 @@ export class RunsService {
       .read()
       .workflows.find((item) => item.id === workflowId);
     const now = new Date().toISOString();
+    const snapshot = this.projects.snapshotForRun(
+      options?.projectId ?? null,
+      options?.projectPath ?? null,
+      options?.mapPath ?? null,
+    );
     const run: Run = {
       id: randomUUID(),
       workflowId,
@@ -99,10 +107,7 @@ export class RunsService {
       createdAt: now,
       updatedAt: now,
       finishedAt: null,
-      project: inspectProject(
-        options?.projectPath ?? null,
-        options?.mapPath ?? null,
-      ),
+      project: snapshot.project,
       developerShape: 'none',
       pendingQuestion: null,
       mapWritten: false,
@@ -117,15 +122,25 @@ export class RunsService {
     };
     this.store.upsertRun(run);
     const cursorConnected = this.settings.hasToken();
-    const live = this.cursor.liveEnabled();
+    const live =
+      cursorConnected &&
+      this.cursor.liveEnabled() &&
+      run.steps.some((step) => step.harness === 'cursor');
     void this.orchestrator
       .execute(
         run,
-        (snapshot) => {
-          this.store.upsertRun(snapshot);
-          this.updates.next({ type: 'run', run: snapshot });
+        (published) => {
+          this.store.upsertRun(published);
+          this.updates.next({ type: 'run', run: published });
         },
-        { delayMs: readDelayMs(), cursorConnected, live },
+        {
+          delayMs: readDelayMs(),
+          cursorConnected,
+          live,
+          cursorToken: this.settings.apiToken(),
+          projectFolder: snapshot.folder,
+          workspaceFile: snapshot.workspaceFile,
+        },
       )
       .catch(() => undefined);
     return this.store.getRun(run.id) ?? run;

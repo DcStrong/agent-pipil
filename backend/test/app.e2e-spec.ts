@@ -17,6 +17,36 @@ process.env.SIM_DELAY_MS = '0';
 delete process.env.CURSOR_API_TOKEN;
 delete process.env.CURSOR_LIVE;
 
+function installCursorFetchMock(): void {
+  const original = globalThis.fetch;
+  globalThis.fetch = jest.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes('/v1/agents') && init?.method === 'POST') {
+      return {
+        ok: true,
+        status: 201,
+        json: async () => ({
+          agent: { id: 'bc-e2e-agent', url: 'https://cursor.com/agents/bc-e2e-agent' },
+          run: { id: 'run-e2e-1' },
+        }),
+      } as Response;
+    }
+    if (url.includes('/runs/run-e2e-1')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          status: 'FINISHED',
+          result: 'E2E: шаг Cursor выполнен.',
+        }),
+      } as Response;
+    }
+    if (original) return original(url, init);
+    throw new Error(`unexpected fetch ${url}`);
+  }) as typeof fetch;
+}
+
+installCursorFetchMock();
+
 describe('Оркестратор (e2e)', () => {
   let app: INestApplication<App>;
 
@@ -62,6 +92,11 @@ describe('Оркестратор (e2e)', () => {
     expect(JSON.stringify(saved.body)).not.toContain(secret);
 
     await request(server).delete('/api/settings/cursor').expect(200);
+
+    await request(server)
+      .put('/api/settings/cursor')
+      .send({ token: secret })
+      .expect(200);
 
     const started = (
       await request(server)

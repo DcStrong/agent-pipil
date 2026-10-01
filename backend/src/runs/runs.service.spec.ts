@@ -3,11 +3,44 @@ import { Test, type TestingModule } from '@nestjs/testing';
 import { mkdir, mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ProjectsService } from '../projects/projects.service';
 import { SettingsService } from '../settings/settings.service';
 import { StoreService } from '../store/store.service';
 import { DATA_PATH } from '../store/store.tokens';
 import { WorkflowsService } from '../workflows/workflows.service';
 import { RunsService } from './runs.service';
+
+function installCursorFetchMock(): () => void {
+  const original = globalThis.fetch;
+  const fetchMock = jest.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes('/v1/agents') && init?.method === 'POST') {
+      return {
+        ok: true,
+        status: 201,
+        json: async () => ({
+          agent: { id: 'bc-mock-agent', url: 'https://cursor.com/agents/bc-mock-agent' },
+          run: { id: 'run-mock-1' },
+        }),
+      } as Response;
+    }
+    if (url.includes('/runs/run-mock-1')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          status: 'FINISHED',
+          result: 'Ответ Cloud Agent для теста.',
+        }),
+      } as Response;
+    }
+    if (original) return original(url, init);
+    throw new Error(`Неожиданный fetch: ${url}`);
+  });
+  globalThis.fetch = fetchMock as typeof fetch;
+  return () => {
+    globalThis.fetch = original;
+  };
+}
 
 async function settle(): Promise<void> {
   for (let step = 0; step < 30; step += 1) {
@@ -21,14 +54,17 @@ describe('RunsService', () => {
   const previousDelay = process.env.SIM_DELAY_MS;
   const previousLive = process.env.CURSOR_LIVE;
   const previousToken = process.env.CURSOR_API_TOKEN;
+  let restoreFetch: (() => void) | undefined;
 
   beforeAll(() => {
     process.env.SIM_DELAY_MS = '0';
     delete process.env.CURSOR_LIVE;
     delete process.env.CURSOR_API_TOKEN;
+    restoreFetch = installCursorFetchMock();
   });
 
   afterAll(() => {
+    restoreFetch?.();
     if (previousDelay === undefined) delete process.env.SIM_DELAY_MS;
     else process.env.SIM_DELAY_MS = previousDelay;
     if (previousLive === undefined) delete process.env.CURSOR_LIVE;
@@ -46,7 +82,7 @@ describe('RunsService', () => {
     if (directory) await rm(directory, { recursive: true, force: true });
   });
 
-  async function make(): Promise<{
+  async function make(options?: { token?: boolean }): Promise<{
     runs: RunsService;
     settings: SettingsService;
     workflows: WorkflowsService;
@@ -55,15 +91,20 @@ describe('RunsService', () => {
     moduleRef = await Test.createTestingModule({
       providers: [
         RunsService,
+        ProjectsService,
         WorkflowsService,
         SettingsService,
         StoreService,
         { provide: DATA_PATH, useValue: join(directory, 'state.json') },
       ],
     }).compile();
+    const settings = moduleRef.get(SettingsService);
+    if (options?.token !== false) {
+      settings.save('cursor_test_token_value');
+    }
     return {
       runs: moduleRef.get(RunsService),
-      settings: moduleRef.get(SettingsService),
+      settings,
       workflows: moduleRef.get(WorkflowsService),
     };
   }
@@ -191,6 +232,15 @@ describe('RunsService', () => {
     expect(finished.status).toBe('failed');
     expect(finished.work.length).toBeLessThanOrEqual(finished.steps.length);
     expect(() => runs.stop(started.id)).toThrow('уже закончен');
+  });
+
+  it('шаг Cursor без токена завершается ошибкой на русском', async () => {
+    const { runs } = await make({ token: false });
+    const started = runs.start('workflow_supervised', 'Проверка Cursor', {
+      roleIds: ['agent_builder'],
+    });
+    const failed = await until(runs, started.id, 'failed');
+    expect(failed.error).toContain('токен');
   });
 
   it('сохраняет токен Cursor и не возвращает его целиком', async () => {

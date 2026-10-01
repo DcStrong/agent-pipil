@@ -225,6 +225,17 @@ export interface CursorConnection {
   hint: string | null
 }
 
+export type SavedProjectKind = 'folder' | 'workspace'
+
+export interface SavedProject {
+  id: string
+  kind: SavedProjectKind
+  path: string
+  folderName: string
+  alias: string
+  label: string
+}
+
 export interface Health {
   ok: true
   cursorConnected: boolean

@@ -30,6 +30,15 @@ export class SettingsService {
     return this.connection(env).connected;
   }
 
+  /** Секрет для вызова Cloud Agents API. Только внутри backend. */
+  apiToken(env: NodeJS.ProcessEnv = process.env): string | null {
+    const saved = this.store.read().cursorToken;
+    if (saved && saved.trim().length >= 8) return saved.trim();
+    const fromEnv = env.CURSOR_API_TOKEN?.trim();
+    if (fromEnv && fromEnv.length >= 8) return fromEnv;
+    return null;
+  }
+
   save(token: string): CursorConnection {
     const trimmed = token.trim();
     if (trimmed.length < 8) {

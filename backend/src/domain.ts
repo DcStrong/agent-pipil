@@ -206,6 +206,19 @@ export interface Run {
   archive: TaskArchive | null;
 }
 
+export type SavedProjectKind = 'folder' | 'workspace';
+
+/** Локальный проект или файл .code-workspace, сохранённый на сервере. */
+export interface SavedProject {
+  id: string;
+  kind: SavedProjectKind;
+  path: string;
+  /** Имя папки или файла workspace без расширения; не редактируется. */
+  folderName: string;
+  /** Пустой — в списке показывается folderName. */
+  alias: string;
+}
+
 export interface State {
   agents: Agent[];
   skills: Skill[];
@@ -215,6 +228,8 @@ export interface State {
   runs: Run[];
   /** Задачи доски. Колонки: new, in_progress, review. */
   tasks: BoardTask[];
+  /** Локальные проекты и рабочие области Cursor. */
+  projects: SavedProject[];
   /** Секрет хранится только на сервере и не уходит в браузер целиком. */
   cursorToken: string | null;
 }
@@ -634,6 +649,7 @@ export function createSeedState(): State {
     presets: seedPresets(),
     runs: [],
     tasks: [],
+    projects: [],
     cursorToken: null,
   };
 }
@@ -950,6 +966,30 @@ function parseEvent(value: unknown): RunEvent {
   };
 }
 
+function savedProjectKind(value: unknown): SavedProjectKind {
+  if (value === 'folder' || value === 'workspace') return value;
+  return fail('тип проекта');
+}
+
+function parseSavedProject(value: unknown): SavedProject {
+  if (!isRecord(value)) fail('проект в списке');
+  return {
+    id: text(value.id, 'id проекта'),
+    kind: savedProjectKind(value.kind),
+    path: text(value.path, 'путь проекта'),
+    folderName: text(value.folderName, 'имя папки проекта'),
+    alias: typeof value.alias === 'string' ? value.alias : '',
+  };
+}
+
+export function ensureSavedProjects(state: State): boolean {
+  if (!Array.isArray(state.projects)) {
+    state.projects = [];
+    return true;
+  }
+  return false;
+}
+
 function parseRun(value: unknown): Run {
   if (
     !isRecord(value) ||
@@ -1025,6 +1065,8 @@ export function parseState(value: unknown): State {
   }
   const cursorToken = value.cursorToken;
   if (cursorToken !== null && typeof cursorToken !== 'string') fail('токен');
+  const projectsRaw = value.projects;
+  if (projectsRaw !== undefined && !Array.isArray(projectsRaw)) fail('проекты');
   return {
     agents: value.agents.map(parseAgent),
     skills: value.skills.map(parseSkill),
@@ -1032,6 +1074,9 @@ export function parseState(value: unknown): State {
     presets: Array.isArray(value.presets) ? value.presets.map(parsePreset) : [],
     runs: value.runs.map(parseRun),
     tasks: parseBoardTasks(value.tasks),
+    projects: Array.isArray(projectsRaw)
+      ? projectsRaw.map(parseSavedProject)
+      : [],
     cursorToken,
   };
 }
