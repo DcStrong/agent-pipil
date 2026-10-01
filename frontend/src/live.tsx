@@ -27,6 +27,7 @@ interface LiveValue {
   upsertTask: (task: BoardTask) => void
   /** Кладёт процесс в уже открытый список, без повторной загрузки всей страницы. */
   upsertWorkflow: (workflow: Workflow) => void
+  removeWorkflow: (id: string) => void
   upsertPreset: (preset: PipelinePreset) => void
   removePreset: (id: string) => void
 }
@@ -85,6 +86,10 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       next[index] = workflow
       return next
     })
+  }, [])
+
+  const removeWorkflow = useCallback((id: string) => {
+    setWorkflows((list) => list.filter((item) => item.id !== id))
   }, [])
 
   const upsertPreset = useCallback((preset: PipelinePreset) => {
@@ -158,6 +163,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       upsertRun,
       upsertTask,
       upsertWorkflow,
+      removeWorkflow,
       upsertPreset,
       removePreset,
     }),
@@ -175,6 +181,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       upsertRun,
       upsertTask,
       upsertWorkflow,
+      removeWorkflow,
       upsertPreset,
       removePreset,
     ],
