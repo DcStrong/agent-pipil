@@ -769,6 +769,35 @@ button:not(.primary):not(.icon-btn):not(.text-btn):not(.node):not(.menu-item):no
 .log-pane { min-width: 0; overflow: auto; padding: 22px 28px 40px; }
 .log-head h1 { margin: 12px 0 4px; font-size: 28px; }
 .log-head p { color: var(--muted); }
+.run-task {
+  margin: 18px 0 22px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #121214;
+}
+.run-task-label {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.run-task-title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+}
+.run-task-body {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--text);
+}
 .activity { list-style: none; margin: 22px 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .activity li {
   display: grid;

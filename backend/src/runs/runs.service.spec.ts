@@ -840,4 +840,37 @@ describe('RunsService', () => {
     ).toContain('Сверка по чеклисту.');
     expect(done.archive?.plan.checklist).toContain('Карточка на месте');
   });
+
+  it('пресет «Вопрос» отвечает на текст задачи, а не на обзор диска', async () => {
+    const { runs, workflows, projectId } = await make();
+    workflows.replace('workflow_supervised', 'Вопрос', 'Один шаг', [
+      {
+        id: 'q',
+        agentId: 'role_orchestrator',
+        title: 'Вопрос',
+        mode: 'question',
+        handoff: '',
+        nextIds: [],
+      },
+    ]);
+    const started = runs.start('workflow_supervised', 'Вопрос\n\nпривет', {
+      projectId,
+    });
+    const done = await until(runs, started.id, 'completed');
+    expect(done.status).toBe('completed');
+    const step = done.steps[0];
+    expect(step?.messages.some((item) => item.author === 'user' && item.text.includes('привет'))).toBe(
+      true,
+    );
+    const roleText = step?.messages
+      .filter((item) => item.author === 'role')
+      .map((item) => item.text)
+      .join('\n');
+    expect(roleText).toContain('привет');
+    expect(roleText).toContain('имитация');
+    expect(roleText).not.toContain('Новый диалог этой задачи');
+    expect(roleText).not.toContain('.DS_Store');
+    expect(done.finalResult).toContain('привет');
+    expect(done.finalResult).not.toContain('Сам посмотрел проект');
+  });
 });

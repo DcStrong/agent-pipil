@@ -2,7 +2,16 @@
 import { useState } from 'react'
 import { api, messageOf } from '../api'
 import { TaskOrderPanel } from '../components/TaskOrderPanel'
-import { clock, duration, eventTag, finalText, harnessLabel, statusLabel, taskTitle } from '../format'
+import {
+  clock,
+  duration,
+  eventTag,
+  finalText,
+  harnessLabel,
+  splitRunTask,
+  statusLabel,
+  taskTitle,
+} from '../format'
 import { useLive } from '../live'
 import { href } from '../route'
 import type { TaskPlan } from '../types'
@@ -73,6 +82,7 @@ export function RunPage({ runId }: { runId: string }) {
   }
 
   const step = run.stepIndex !== null ? run.steps[run.stepIndex] : run.steps[0]
+  const taskParts = splitRunTask(run.task)
 
   return (
     <div className="run-page">
@@ -88,6 +98,23 @@ export function RunPage({ runId }: { runId: string }) {
           <h1>{run.workflowName}</h1>
           <p>{taskTitle(run.task)}</p>
         </header>
+        <section className="run-task" data-testid="run-task">
+          <h2 className="run-task-label">Задача пользователя</h2>
+          {taskParts.body ? (
+            <>
+              <p className="run-task-title" data-testid="run-task-title">
+                {taskParts.title}
+              </p>
+              <pre className="run-task-body" data-testid="run-task-body">
+                {taskParts.body}
+              </pre>
+            </>
+          ) : (
+            <pre className="run-task-body" data-testid="run-task-body">
+              {taskParts.title}
+            </pre>
+          )}
+        </section>
         <ol className="activity">
           {run.events.map((event) => (
             <li key={event.id}>
@@ -175,7 +202,7 @@ export function RunPage({ runId }: { runId: string }) {
           </div>
           <div>
             <dt>Задача</dt>
-            <dd>{taskTitle(run.task)}</dd>
+            <dd data-testid="run-task-sidebar">{run.task.trim()}</dd>
           </div>
           <div>
             <dt>Среда</dt>

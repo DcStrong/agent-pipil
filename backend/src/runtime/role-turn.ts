@@ -7,12 +7,15 @@ import type {
   HandoffBrief,
   ProjectSnapshot,
   ReturnShape,
+  StepMode,
 } from '../domain';
+import { simulatedQuestionAnswer, userPromptFromTask } from './task-text';
 
 export interface TurnInput {
   kind: AgentKind;
   name: string;
   task: string;
+  stepMode: StepMode;
   brief: HandoffBrief | null;
   answer: string | null;
   project: ProjectSnapshot | null;
@@ -78,6 +81,18 @@ export function roleTurn(input: TurnInput): TurnResult {
   };
 
   if (input.kind === 'orchestrator') {
+    if (input.stepMode === 'question') {
+      const reply = simulatedQuestionAnswer(input.task);
+      return {
+        ...base,
+        text: reply,
+        handoff: {
+          goal: userPromptFromTask(input.task),
+          decided: reply.slice(0, 240),
+          now: 'Ответ имитации по тексту задачи.',
+        },
+      };
+    }
     return {
       ...base,
       text: [

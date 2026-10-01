@@ -75,6 +75,19 @@ export function taskTitle(task: string): string {
   return line.length > 72 ? `${line.slice(0, 71)}…` : line
 }
 
+/** Заголовок и тело задачи, как при запуске с доски (title + пустая строка + описание). */
+export function splitRunTask(task: string): { title: string; body: string } {
+  const trimmed = task.trim()
+  if (!trimmed) return { title: 'Задача', body: '' }
+  const parts = trimmed.split(/\n\n+/)
+  if (parts.length >= 2) {
+    const title = parts[0]?.trim() || 'Задача'
+    const body = parts.slice(1).join('\n\n').trim()
+    return { title, body }
+  }
+  return { title: trimmed, body: '' }
+}
+
 export function finalText(output: string): string {
   const marker = '## Итог'
   const index = output.lastIndexOf(marker)
