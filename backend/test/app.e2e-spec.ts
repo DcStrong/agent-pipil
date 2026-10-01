@@ -194,6 +194,11 @@ describe('Оркестратор (e2e)', () => {
       .expect(201);
     expect(moved.body.status).toBe('in_progress');
     expect(moved.body.activity[0].note).toContain('Взял задачу');
+    expect(moved.body.runId).toBeTruthy();
+    const pipeline = await request(server)
+      .get(`/api/runs/${moved.body.runId as string}`)
+      .expect(200);
+    expect(pipeline.body.project?.folder).toBeTruthy();
     expect(JSON.stringify(moved.body)).not.toContain(secret);
 
     await request(server)
