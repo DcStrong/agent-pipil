@@ -328,6 +328,9 @@ export class Orchestrator {
       stepIndex: index,
     });
     if (incoming) say(step, 'handoff', briefLine(incoming));
+    if (step.kind === 'orchestrator' && step.mode === 'question') {
+      say(step, 'user', run.task.trim());
+    }
     tell();
     await sleep(delayMs);
     if (this.halted.has(run.id)) {
@@ -526,6 +529,7 @@ export class Orchestrator {
         kind: step.kind,
         name: step.agentName,
         task: run.task,
+        stepMode: step.mode,
         brief: incoming,
         answer,
         project: run.project,
