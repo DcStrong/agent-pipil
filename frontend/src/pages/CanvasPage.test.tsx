@@ -1,6 +1,7 @@
 /**
- * Роли, «Следом» и «Ответвить» либо меняют дерево, либо в той же части панели
- * написано, почему холст занят. Предупреждение только в начале длинной панели не считается.
+ * «Следом» и «Ответвить» меняют дерево; шаг убирается без обрыва связей.
+ * У ролей нет флажков «в конец списка» — только «Ещё» и блок «Следом».
+ * Занятый холст в той же части панели объясняет, почему кнопки не работают.
  */
 import { act, cleanup, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -151,24 +152,18 @@ afterEach(() => {
   harness.live = null
 })
 
-describe('Холст: роли, «Следом» и «Ответвить»', () => {
-  it('без запуска флажок роли добавляет шаг', async () => {
+describe('Холст: роли, «Следом», «Ответвить» и уборка шага', () => {
+  it('в блоке ролей нет флажков добавления в конец списка', async () => {
     await open([])
-    expect(screen.queryByTestId('canvas-busy')).toBeNull()
-    await press(screen.getByTestId('role-tester'))
-    expect(titles()).toEqual(['Сборка', 'Проверка', 'Тестировщик'])
+    const roles = screen.getByTestId('roles-panel')
+    expect(within(roles).queryByRole('checkbox')).toBeNull()
+    expect(screen.queryByTestId('role-tester')).toBeNull()
   })
 
-  it('без crypto.randomUUID роли, «Следом» и «Ответвить» меняют дерево', async () => {
+  it('без crypto.randomUUID «Следом» и «Ответвить» меняют дерево', async () => {
     const saved = globalThis.crypto.randomUUID
     Reflect.deleteProperty(globalThis.crypto, 'randomUUID')
     try {
-      await open([])
-      await press(screen.getByTestId('role-tester'))
-      expect(titles()).toEqual(['Сборка', 'Проверка', 'Тестировщик'])
-
-      cleanup()
-      harness.live = null
       await open([])
       await press(screen.getByTestId('place-next'))
       expect(titles()).toEqual(['Сборка', 'Оркестратор', 'Проверка'])
@@ -203,11 +198,19 @@ describe('Холст: роли, «Следом» и «Ответвить»', () 
     expect(depth('Оркестратор')).toBe(1)
   })
 
+  it('убирает выбранный шаг и сохраняет цепочку', async () => {
+    await open([])
+    await press(screen.getByTestId('step-step-b'))
+    await press(screen.getByTestId('remove-step'))
+    expect(titles()).toEqual(['Сборка'])
+    expect(screen.getByTestId('remove-step-reason').textContent).toContain('хотя бы один шаг')
+  })
+
   it('занятый холст не молчит у ролей, «Следом» и «Ответвить»', async () => {
     await open([makeRun('waiting_user')])
     const before = titles().join('|')
     const cases = [
-      ['roles-panel', 'role-tester'],
+      ['roles-panel', 'role-more-tester'],
       ['place-panel', 'place-next'],
       ['place-panel', 'place-branch'],
     ] as const
@@ -223,7 +226,7 @@ describe('Холст: роли, «Следом» и «Ответвить»', () 
   it('отказ от вопроса не держит холст занятым', async () => {
     await open([makeRun('failed')])
     expect(screen.queryByTestId('canvas-busy')).toBeNull()
-    await press(screen.getByTestId('role-tester'))
-    expect(titles()).toContain('Тестировщик')
+    await press(screen.getByTestId('role-more-tester'))
+    expect(titles()).toEqual(['Сборка', 'Тестировщик', 'Проверка'])
   })
 })
