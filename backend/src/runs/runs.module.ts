@@ -8,5 +8,6 @@ import { RunsService } from './runs.service';
   imports: [SettingsModule, ProjectsModule],
   controllers: [RunsController],
   providers: [RunsService],
+  exports: [RunsService],
 })
 export class RunsModule {}

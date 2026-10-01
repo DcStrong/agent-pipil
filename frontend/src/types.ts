@@ -278,6 +278,7 @@ export interface BoardTask {
   projectLabel: string
   workflowId: string | null
   workflowName: string | null
+  runId: string | null
   team: TeamMember[]
   phase: BoardPhase
   activity: BoardActivity[]

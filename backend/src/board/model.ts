@@ -48,6 +48,8 @@ export interface BoardTask {
   /** Если задан — команда взята из процесса на холсте. */
   workflowId: string | null;
   workflowName: string | null;
+  /** Запуск оркестратора, созданный при переносе в «В работу». */
+  runId: string | null;
   team: TeamMember[];
   phase: BoardPhase;
   activity: BoardActivity[];
@@ -205,6 +207,12 @@ function parseTask(value: unknown): BoardTask {
       workflowName === null || workflowName === undefined
         ? null
         : text(workflowName, 'имя процесса задачи'),
+    runId:
+      value.runId === null ||
+      value.runId === undefined ||
+      value.runId === ''
+        ? null
+        : text(value.runId, 'запуск задачи'),
     team: value.team.map(parseMember),
     phase: boardPhase(value.phase),
     activity: Array.isArray(value.activity)

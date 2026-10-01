@@ -98,10 +98,20 @@ describe('Оркестратор (e2e)', () => {
       .send({ token: secret })
       .expect(200);
 
+    const project = await request(server)
+      .post('/api/projects')
+      .send({ kind: 'folder', path: dirname(process.env.DATA_PATH!) })
+      .expect(201);
+    const projectId = project.body.id as string;
+
     const started = (
       await request(server)
         .post('/api/runs')
-        .send({ workflowId: workflow?.id, task: 'Добавить экспорт в webp' })
+        .send({
+          workflowId: workflow?.id,
+          task: 'Добавить экспорт в webp',
+          projectId,
+        })
         .expect(201)
     ).body as Run;
 
@@ -145,11 +155,15 @@ describe('Оркестратор (e2e)', () => {
       .send({ token: secret })
       .expect(200);
 
-    const project = await request(server)
-      .post('/api/projects')
-      .send({ kind: 'folder', path: dirname(process.env.DATA_PATH!) })
-      .expect(201);
-    const projectId = project.body.id as string;
+    const listed = await request(server).get('/api/projects').expect(200);
+    let projectId = (listed.body as Array<{ id: string }>)[0]?.id;
+    if (!projectId) {
+      const project = await request(server)
+        .post('/api/projects')
+        .send({ kind: 'folder', path: dirname(process.env.DATA_PATH!) })
+        .expect(201);
+      projectId = project.body.id as string;
+    }
 
     const created = await request(server)
       .post('/api/board')
@@ -229,6 +243,12 @@ describe('Оркестратор (e2e)', () => {
     }
     expect(current.status).toBe('review');
     expect(current.plan?.text).toBe(edited);
+
+    const linked = await request(server).get(`/api/board/${created.body.id}`).expect(200);
+    const runId = linked.body.runId as string | null;
+    if (runId) {
+      await request(server).post(`/api/runs/${runId}/stop`).expect(201);
+    }
 
     await request(server)
       .post(`/api/board/${asked.body.id}/move`)

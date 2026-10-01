@@ -1,5 +1,6 @@
 import { ConflictException } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
+import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -82,10 +83,25 @@ describe('RunsService', () => {
     if (directory) await rm(directory, { recursive: true, force: true });
   });
 
+  function seedProject(store: StoreService, folder: string): string {
+    const id = randomUUID();
+    store.mutate((state) => {
+      state.projects.push({
+        id,
+        kind: 'folder',
+        path: folder,
+        folderName: 'run-proj',
+        alias: '',
+      });
+    });
+    return id;
+  }
+
   async function make(options?: { token?: boolean }): Promise<{
     runs: RunsService;
     settings: SettingsService;
     workflows: WorkflowsService;
+    projectId: string;
   }> {
     directory = await mkdtemp(join(tmpdir(), 'pipil-'));
     moduleRef = await Test.createTestingModule({
@@ -99,6 +115,8 @@ describe('RunsService', () => {
       ],
     }).compile();
     const settings = moduleRef.get(SettingsService);
+    const store = moduleRef.get(StoreService);
+    const projectId = seedProject(store, directory);
     if (options?.token !== false) {
       settings.save('cursor_test_token_value');
     }
@@ -106,20 +124,22 @@ describe('RunsService', () => {
       runs: moduleRef.get(RunsService),
       settings,
       workflows: moduleRef.get(WorkflowsService),
+      projectId,
     };
   }
 
   it('останавливается на проверке и после подтверждения отдаёт итог', async () => {
-    const { runs } = await make();
+    const { runs, projectId } = await make();
     const started = runs.start(
       'workflow_supervised',
       'Добавить тихий режим уведомлений',
+      { projectId },
     );
     expect(started.status).toBe('running');
     expect(started.stepIndex).toBe(0);
-    expect(() => runs.start('workflow_supervised', 'Вторая задача')).toThrow(
-      ConflictException,
-    );
+    expect(() =>
+      runs.start('workflow_supervised', 'Вторая задача', { projectId }),
+    ).toThrow(ConflictException);
 
     let current = started;
     for (
@@ -162,8 +182,10 @@ describe('RunsService', () => {
   });
 
   it('отклонение владельца останавливает запуск', async () => {
-    const { runs } = await make();
-    const started = runs.start('workflow_supervised', 'Короткий запуск');
+    const { runs, projectId } = await make();
+    const started = runs.start('workflow_supervised', 'Короткий запуск', {
+      projectId,
+    });
     for (
       let attempt = 0;
       attempt < 20 && runs.get(started.id).status === 'running';
@@ -234,10 +256,21 @@ describe('RunsService', () => {
     expect(() => runs.stop(started.id)).toThrow('уже закончен');
   });
 
+  it('не стартует со средой Cursor без projectId', async () => {
+    const { runs, settings } = await make();
+    settings.save('cursor_test_token_value');
+    expect(() =>
+      runs.start('workflow_supervised', 'Задача без проекта', {
+        roleIds: ['agent_builder'],
+      }),
+    ).toThrow(/проект|workspace/i);
+  });
+
   it('шаг Cursor без токена завершается ошибкой на русском', async () => {
-    const { runs } = await make({ token: false });
+    const { runs, projectId } = await make({ token: false });
     const started = runs.start('workflow_supervised', 'Проверка Cursor', {
       roleIds: ['agent_builder'],
+      projectId,
     });
     const failed = await until(runs, started.id, 'failed');
     expect(failed.error).toContain('токен');
@@ -414,7 +447,7 @@ describe('RunsService', () => {
   });
 
   it('идёт по дереву и повторяет роль', async () => {
-    const { runs, workflows } = await make();
+    const { runs, workflows, projectId } = await make();
     workflows.replace('workflow_supervised', 'Сборка с проверкой', 'Дерево', [
       {
         id: 'n1',
@@ -473,7 +506,9 @@ describe('RunsService', () => {
         nextIds: [],
       },
     ]);
-    const started = runs.start('workflow_supervised', 'Короткий обход дерева');
+    const started = runs.start('workflow_supervised', 'Короткий обход дерева', {
+      projectId,
+    });
     const done = await until(runs, started.id, 'completed');
     expect(done.status).toBe('completed');
     expect(done.work.map((item) => item.title)).toEqual([
@@ -488,7 +523,7 @@ describe('RunsService', () => {
   });
 
   it('без галки агенты берут задачу сразу и не пишут план', async () => {
-    const { runs, workflows } = await make();
+    const { runs, workflows, projectId } = await make();
     workflows.replace(
       'workflow_supervised',
       'Сборка с проверкой',
@@ -531,6 +566,7 @@ describe('RunsService', () => {
     const started = runs.start(
       'workflow_supervised',
       'Поправить подпись кнопки',
+      { projectId },
     );
     const done = await until(runs, started.id, 'completed');
     expect(done.status).toBe('completed');
@@ -665,7 +701,7 @@ describe('RunsService', () => {
   });
 
   it('режим шага выбирает кусок, а кто стоит на шаге остаётся деревом холста', async () => {
-    const { runs, workflows } = await make();
+    const { runs, workflows, projectId } = await make();
     workflows.replace('workflow_supervised', 'Сборка с проверкой', 'Дерево', [
       {
         id: 'r',
@@ -705,6 +741,7 @@ describe('RunsService', () => {
       'Собрать карточку заказа',
       {
         deepThinking: true,
+        projectId,
       },
     );
     expect(started.steps.map((step) => step.title)).toEqual([

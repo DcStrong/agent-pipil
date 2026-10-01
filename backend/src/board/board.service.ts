@@ -5,6 +5,7 @@
  */
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
   OnModuleDestroy,
@@ -14,6 +15,8 @@ import { randomUUID } from 'node:crypto';
 import type { Agent, StepMode } from '../domain';
 import { displayName } from '../runtime/saved-project';
 import { orderSteps } from '../runtime/step-graph';
+import { ProjectsService } from '../projects/projects.service';
+import { RunsService } from '../runs/runs.service';
 import { readDelayMs } from '../runtime/orchestrator';
 import { StoreService } from '../store/store.service';
 import {
@@ -43,7 +46,11 @@ export interface CreateTaskInput {
 export class BoardService implements OnModuleInit, OnModuleDestroy {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
 
-  constructor(private readonly store: StoreService) {}
+  constructor(
+    private readonly store: StoreService,
+    private readonly runs: RunsService,
+    private readonly projects: ProjectsService,
+  ) {}
 
   /** Если сервер погас посреди хода, имитация продолжается с той же фазы. */
   onModuleInit(): void {
@@ -133,6 +140,7 @@ export class BoardService implements OnModuleInit, OnModuleDestroy {
       projectLabel: displayName(project),
       workflowId: storedWorkflowId,
       workflowName,
+      runId: null,
       team: members,
       phase: 'idle',
       activity: [],
@@ -163,6 +171,7 @@ export class BoardService implements OnModuleInit, OnModuleDestroy {
     if (current.status !== 'new' || current.phase !== 'idle') {
       throw new BadRequestException('В работу уходит только новая задача.');
     }
+    const runId = this.startRunForTask(current);
     const agents = this.store.read().agents;
     const now = new Date().toISOString();
     this.store.mutate((state) => {
@@ -170,6 +179,7 @@ export class BoardService implements OnModuleInit, OnModuleDestroy {
       if (!task) return;
       task.status = 'in_progress';
       task.phase = 'working';
+      task.runId = runId;
       task.activity = task.team.map((member) =>
         pickup(
           member,
@@ -229,6 +239,45 @@ export class BoardService implements OnModuleInit, OnModuleDestroy {
     });
     this.schedule(id, () => this.finishBuild(id));
     return this.must(id);
+  }
+
+  /** Стартует оркестратор с projectId задачи доски (папка или workspace). */
+  private startRunForTask(task: BoardTask): string {
+    const projectId = task.projectId?.trim() ?? '';
+    if (!projectId) {
+      throw new BadRequestException(
+        'У задачи не указан проект или workspace. Перевести её в работу нельзя.',
+      );
+    }
+    try {
+      this.projects.snapshotForRun(projectId, null, null);
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
+      throw new BadRequestException(
+        'Проект задачи не найден на сервере. Выберите другой в разделе «Проект».',
+      );
+    }
+    const text = task.description.trim()
+      ? `${task.title}\n\n${task.description}`
+      : task.title;
+    const workflowId = task.workflowId ?? 'workflow_supervised';
+    const roleIds = task.workflowId
+      ? undefined
+      : task.team.map((member) => member.agentId);
+    try {
+      const run = this.runs.start(workflowId, text, {
+        projectId,
+        roleIds,
+      });
+      return run.id;
+    } catch (error) {
+      if (error instanceof ConflictException) {
+        throw new BadRequestException(
+          'Сейчас уже идёт другой запуск. Остановите его или дождитесь завершения, затем снова переведите задачу в работу.',
+        );
+      }
+      throw error;
+    }
   }
 
   private teamFromWorkflow(

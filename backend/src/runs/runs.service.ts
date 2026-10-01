@@ -75,15 +75,28 @@ export class RunsService {
     const steps = options?.roleIds
       ? this.snapshotRoles(options.roleIds)
       : this.snapshot(workflowId);
+    const needsProject = steps.some((step) => step.harness === 'cursor');
+    const projectId = options?.projectId?.trim() ?? '';
+    const projectPath = options?.projectPath?.trim() ?? '';
+    if (needsProject && !projectId && !projectPath) {
+      throw new BadRequestException(
+        'Для шага со средой Cursor нужен проект или workspace. Укажите его в задаче или в параметрах запуска.',
+      );
+    }
     const workflow = this.store
       .read()
       .workflows.find((item) => item.id === workflowId);
     const now = new Date().toISOString();
     const snapshot = this.projects.snapshotForRun(
-      options?.projectId ?? null,
-      options?.projectPath ?? null,
+      projectId || null,
+      projectPath || null,
       options?.mapPath ?? null,
     );
+    if (needsProject && !snapshot.folder) {
+      throw new BadRequestException(
+        'Проект или workspace не найден на этой машине. Проверьте путь в разделе «Проект».',
+      );
+    }
     const run: Run = {
       id: randomUUID(),
       workflowId,

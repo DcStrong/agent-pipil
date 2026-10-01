@@ -5,11 +5,46 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentsService } from '../agents/agents.service';
+import { ProjectsService } from '../projects/projects.service';
+import { RunsService } from '../runs/runs.service';
 import { CursorClient } from '../runtime/cursor-client';
 import { SettingsService } from '../settings/settings.service';
 import { StoreService } from '../store/store.service';
 import { DATA_PATH } from '../store/store.tokens';
+import { WorkflowsService } from '../workflows/workflows.service';
 import { BoardService } from './board.service';
+
+function installCursorFetchMock(): () => void {
+  const original = globalThis.fetch;
+  const fetchMock = jest.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes('/v1/agents') && init?.method === 'POST') {
+      return {
+        ok: true,
+        status: 201,
+        json: async () => ({
+          agent: { id: 'bc-board-mock', url: 'https://cursor.com/agents/bc-board-mock' },
+          run: { id: 'run-board-mock' },
+        }),
+      } as Response;
+    }
+    if (url.includes('/runs/run-board-mock')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          status: 'FINISHED',
+          result: 'Ответ для теста доски.',
+        }),
+      } as Response;
+    }
+    if (original) return original(url, init);
+    throw new Error(`Неожиданный fetch: ${url}`);
+  });
+  globalThis.fetch = fetchMock as typeof fetch;
+  return () => {
+    globalThis.fetch = original;
+  };
+}
 
 async function settle(): Promise<void> {
   for (let step = 0; step < 20; step += 1) {
@@ -21,12 +56,15 @@ describe('BoardService', () => {
   let directory = '';
   let moduleRef: TestingModule | undefined;
   const previousDelay = process.env.SIM_DELAY_MS;
+  let restoreFetch: (() => void) | undefined;
 
   beforeAll(() => {
     process.env.SIM_DELAY_MS = '0';
+    restoreFetch = installCursorFetchMock();
   });
 
   afterAll(() => {
+    restoreFetch?.();
     if (previousDelay === undefined) delete process.env.SIM_DELAY_MS;
     else process.env.SIM_DELAY_MS = previousDelay;
   });
@@ -65,6 +103,9 @@ describe('BoardService', () => {
     moduleRef = await Test.createTestingModule({
       providers: [
         BoardService,
+        RunsService,
+        ProjectsService,
+        WorkflowsService,
         AgentsService,
         SettingsService,
         StoreService,
@@ -72,11 +113,13 @@ describe('BoardService', () => {
       ],
     }).compile();
     const store = moduleRef.get(StoreService);
+    const settings = moduleRef.get(SettingsService);
+    settings.save('cursor_board_test_token_value');
     const projectId = seedProject(store, path || directory);
     return {
       board: moduleRef.get(BoardService),
       agents: moduleRef.get(AgentsService),
-      settings: moduleRef.get(SettingsService),
+      settings,
       store,
       projectId,
     };
@@ -236,6 +279,34 @@ describe('BoardService', () => {
       globalThis.fetch = original;
       spy.mockRestore();
     }
+  });
+
+  it('при переносе в работу стартует запуск с projectId задачи', async () => {
+    const { board, projectId, store } = await make();
+    const task = board.create('Старт', 'Текст задачи', {
+      projectId,
+      team: [{ agentId: 'role_analyst', mode: 'ask' }],
+    });
+    board.move(task.id, 'in_progress');
+    const updated = board.get(task.id);
+    expect(updated.runId).toBeTruthy();
+    const project = store.read().projects.find((item) => item.id === projectId);
+    const run = store.read().runs.find((item) => item.id === updated.runId);
+    expect(run?.project?.folder).toBe(project?.path);
+    expect(run?.task).toContain('Старт');
+  });
+
+  it('не переводит в работу задачу без projectId', async () => {
+    const { board, store, projectId } = await make();
+    const task = board.create('Без проекта', '', {
+      projectId,
+      team: [{ agentId: 'role_analyst' }],
+    });
+    store.mutate((state) => {
+      const row = state.tasks.find((item) => item.id === task.id);
+      if (row) row.projectId = '';
+    });
+    expect(() => board.move(task.id, 'in_progress')).toThrow(/проект|workspace/i);
   });
 
   it('без проекта или без исполнителей не создаёт задачу', async () => {
