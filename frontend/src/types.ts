@@ -134,6 +134,37 @@ export interface Run {
   mapNote: string | null
 }
 
+export type CursorFileKind = 'rule' | 'skill' | 'mcp'
+
+export interface CursorFileItem {
+  kind: CursorFileKind
+  name: string
+  relativePath: string
+}
+
+export interface CursorFileDocument extends CursorFileItem {
+  content: string
+}
+
+/** Предложение выключено, пока пользователь сам не запишет файл. */
+export interface CursorRecommendation {
+  id: 'machine-runs'
+  title: string
+  text: string
+  relativePath: string
+  added: boolean
+}
+
+export interface CursorProjectView {
+  folder: string | null
+  available: boolean
+  cursorApi: 'disconnected'
+  rules: CursorFileItem[]
+  skills: CursorFileItem[]
+  mcp: CursorFileItem[]
+  recommendation: CursorRecommendation
+}
+
 export interface CursorConnection {
   connected: boolean
   source: 'none' | 'saved' | 'env'

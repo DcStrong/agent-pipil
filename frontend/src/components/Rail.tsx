@@ -1,9 +1,9 @@
 /** Узкая тёмная рейка: только экраны, которые реально открываются. */
-import { IconAgent, IconGear, IconNodes, IconRuns } from './Icons'
+import { IconAgent, IconFolder, IconGear, IconNodes, IconRuns } from './Icons'
 import { href, type Route } from '../route'
 
 export function Rail({ route }: { route: Route }) {
-  const items: Array<{ route: Route; label: string; icon: 'nodes' | 'runs' | 'agent'; on: boolean }> = [
+  const items: Array<{ route: Route; label: string; icon: 'nodes' | 'runs' | 'agent' | 'folder'; on: boolean }> = [
     {
       route: { name: 'workflows' },
       label: 'Процессы',
@@ -22,6 +22,12 @@ export function Rail({ route }: { route: Route }) {
       icon: 'agent',
       on: route.name === 'agents' || route.name === 'agent',
     },
+    {
+      route: { name: 'project' },
+      label: 'Проект',
+      icon: 'folder',
+      on: route.name === 'project',
+    },
   ]
 
   return (
@@ -38,6 +44,7 @@ export function Rail({ route }: { route: Route }) {
           {item.icon === 'nodes' ? <IconNodes /> : null}
           {item.icon === 'runs' ? <IconRuns /> : null}
           {item.icon === 'agent' ? <IconAgent /> : null}
+          {item.icon === 'folder' ? <IconFolder /> : null}
         </a>
       ))}
       <div className="rail-spacer" />

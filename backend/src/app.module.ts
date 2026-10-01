@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AgentsModule } from './agents/agents.module';
 import { AppController } from './app.controller';
+import { ProjectCursorModule } from './project/project-cursor.module';
 import { RunsModule } from './runs/runs.module';
 import { SettingsModule } from './settings/settings.module';
 import { SkillsModule } from './skills/skills.module';
@@ -14,6 +15,7 @@ import { WorkflowsModule } from './workflows/workflows.module';
     SkillsModule,
     WorkflowsModule,
     SettingsModule,
+    ProjectCursorModule,
     RunsModule,
   ],
   controllers: [AppController],

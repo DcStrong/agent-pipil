@@ -7,6 +7,7 @@ export type Route =
   | { name: 'run'; runId: string }
   | { name: 'agents' }
   | { name: 'agent'; agentId: string }
+  | { name: 'project' }
   | { name: 'settings' }
 
 export function parseRoute(hash: string): Route {
@@ -17,6 +18,7 @@ export function parseRoute(hash: string): Route {
   if (head === 'agent' && id) return { name: 'agent', agentId: decodeURIComponent(id) }
   if (head === 'runs') return { name: 'runs' }
   if (head === 'agents') return { name: 'agents' }
+  if (head === 'project') return { name: 'project' }
   if (head === 'settings') return { name: 'settings' }
   return { name: 'workflows' }
 }
@@ -37,6 +39,7 @@ export function href(route: Route): string {
   if (route.name === 'agent') return `#/agent/${route.agentId}`
   if (route.name === 'runs') return '#/runs'
   if (route.name === 'agents') return '#/agents'
+  if (route.name === 'project') return '#/project'
   if (route.name === 'settings') return '#/settings'
   return '#/workflows'
 }

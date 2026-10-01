@@ -2,6 +2,10 @@ import type {
   Agent,
   AgentKind,
   CursorConnection,
+  CursorFileDocument,
+  CursorFileKind,
+  CursorProjectView,
+  CursorRecommendation,
   Harness,
   Health,
   Run,
@@ -94,6 +98,30 @@ export const api = {
       body: JSON.stringify({ token }),
     }),
   clearCursor: () => request<CursorConnection>('/api/settings/cursor', { method: 'DELETE' }),
+  /** Списки .cursor. Пустая папка возвращает предложение, не создавая файлов. */
+  cursorProject: (folder: string) =>
+    request<CursorProjectView>(`/api/project/cursor?folder=${encodeURIComponent(folder)}`),
+  cursorFile: (folder: string, item: { kind: CursorFileKind; name: string; relativePath: string }) => {
+    const query = new URLSearchParams({
+      folder,
+      kind: item.kind,
+      name: item.name,
+      path: item.relativePath,
+    })
+    return request<CursorFileDocument>(`/api/project/cursor/file?${query.toString()}`)
+  },
+  saveCursorFile: (body: {
+    folder: string
+    kind: CursorFileKind
+    name: string
+    content: string
+    relativePath?: string | null
+  }) => request<CursorFileDocument>('/api/project/cursor/file', { method: 'PUT', body: JSON.stringify(body) }),
+  addRecommendation: (folder: string) =>
+    request<CursorRecommendation>('/api/project/cursor/recommendation', {
+      method: 'POST',
+      body: JSON.stringify({ folder }),
+    }),
 }
 
 export function subscribeRuns(onMessage: (message: StreamMessage) => void): () => void {
