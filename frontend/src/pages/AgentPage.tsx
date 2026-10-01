@@ -257,7 +257,10 @@ export function AgentPage({ agentId }: { agentId: string }) {
       </section>
       <form className="card form-card" onSubmit={(event) => void save(event)}>
         <h2>Инструкции</h2>
-        <p className="hint">Дополнительное указание, как агент ведёт свой шаг.</p>
+        <p className="hint" data-testid="role-duty-hint">
+          Зону ответственности можно поправить в этом поле или оставить текущий текст. Более полный вариант по
+          умолчанию появится позже.
+        </p>
         <label className="field">
           <span>Имя</span>
           <input value={name} onChange={(event) => setName(event.target.value)} />

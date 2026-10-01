@@ -3,6 +3,7 @@ import { LayoutGroup, motion } from 'motion/react'
 import { useEffect, useState } from 'react'
 import { api, messageOf } from '../api'
 import { DarkSelect } from '../components/DarkSelect'
+import { TaskExamples, type ExampleId } from '../components/TaskExamples'
 import { TaskOrderPanel } from '../components/TaskOrderPanel'
 import { finalText, isOpenRun, statusLabel, taskTitle } from '../format'
 import { useLive } from '../live'
@@ -42,6 +43,8 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
   const [picked, setPicked] = useState('')
   const [presetName, setPresetName] = useState('')
   const [presetNote, setPresetNote] = useState<string | null>(null)
+  /** Какой пример последний подставил текст. На запуск не влияет. */
+  const [example, setExample] = useState<ExampleId | null>(null)
 
   const signature = workflow
     ? JSON.stringify({
@@ -106,6 +109,8 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
   const byId = new Map(graph.map((step) => [step.id, step]))
   const selectedStep = graph.find((step) => step.id === selected) ?? graph[0]
   const palette = [...agents].sort((left, right) => agentRank(left.kind) - agentRank(right.kind) || left.name.localeCompare(right.name, 'ru'))
+  const roleAgents = palette.filter((agent) => TASK_ROLES.includes(agent.kind))
+  const pickedRoleIds = roleAgents.filter((agent) => steps.some((step) => step.agentId === agent.id)).map((agent) => agent.id)
   const placeAgent = palette.find((agent) => agent.id === (placeAgentId || palette[0]?.id)) ?? palette[0]
   const openedStep = shown?.steps.find((step) => step.stepId === opened) ?? null
   const incoming = new Set<string>()
@@ -186,6 +191,59 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
       }))
     commit(kept)
     if (selected && dropping.has(selected)) setSelected(kept[0]?.id ?? null)
+  }
+
+  /** Пример подставляет текст и флажки ролей. Запуск отсюда не начинается. */
+  function applyExample(exampleId: ExampleId, nextTask: string, nextPicked: string[]) {
+    setExample(exampleId)
+    setTask(nextTask)
+    if (locked) return
+    const wanted = new Set(nextPicked)
+    const roleIds = new Set(roleAgents.map((agent) => agent.id))
+    const original = materialize(steps)
+    const dropping = new Set(
+      original.filter((step) => roleIds.has(step.agentId) && !wanted.has(step.agentId)).map((step) => step.id),
+    )
+    const missing = roleAgents.filter(
+      (agent) => wanted.has(agent.id) && !original.some((step) => step.agentId === agent.id && !dropping.has(step.id)),
+    )
+    if (original.length - dropping.size + missing.length < 1) {
+      setError('В процессе нужен хотя бы один шаг.')
+      return
+    }
+    if (dropping.size === 0 && missing.length === 0) return
+    let next = original
+      .filter((step) => !dropping.has(step.id))
+      .map((step) => ({
+        ...step,
+        nextIds: step.nextIds.flatMap((id) => {
+          if (!dropping.has(id)) return [id]
+          const removed = original.find((item) => item.id === id)
+          return (removed?.nextIds ?? []).filter((child) => !dropping.has(child) && child !== step.id)
+        }),
+      }))
+    let addedId: string | undefined
+    for (const agent of missing) {
+      const id = crypto.randomUUID()
+      addedId = id
+      const created: WorkflowStep = {
+        id,
+        agentId: agent.id,
+        title: agent.name,
+        mode: agent.kind === 'architect' ? 'question' : agent.kind === 'reviewer' ? 'approval' : 'automatic',
+        handoff: '',
+        nextIds: [],
+      }
+      const anchor = orderSteps(next).at(-1)
+      if (!anchor) {
+        next = [created]
+        continue
+      }
+      created.nextIds = [...anchor.nextIds]
+      next = [...next.map((step) => (step.id === anchor.id ? { ...step, nextIds: [id] } : step)), created]
+    }
+    const selectId = addedId ?? (selected && !dropping.has(selected) ? selected : next[0]?.id)
+    commit(next, selectId)
   }
 
   function connect(toId: string) {
@@ -523,6 +581,7 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
             </div>
           ))}
         </div>
+        <TaskExamples agents={roleAgents} picked={pickedRoleIds} active={example} onApply={applyExample} />
         <div className="editor">
           <h2>Поставить на холст</h2>
           <p className="hint">«Следом» вставляет шаг в цепочку. «Ответвить» ведёт вторую ветку от выбранного шага.</p>
@@ -553,6 +612,9 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
             onChange={(event) => setProjectPath(event.target.value)}
           />
         </label>
+        <p className="hint" data-testid="folder-hint">
+          Для новой возможности укажите здесь папку проекта.
+        </p>
         <label className="field">
           <span>Карта, если уже есть</span>
           <input
@@ -585,6 +647,9 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
         >
           Запустить
         </button>
+        <p className="hint" data-testid="start-hint">
+          «Запустить» отдаёт задачу отмеченным ролям. Токен Cursor для этого не нужен: без него запуск остаётся имитацией.
+        </p>
         {live ? (
           <p className="now" data-testid="run-status">
             Сейчас: {live.steps[live.stepIndex ?? 0]?.title ?? '—'} · {statusLabel(live.status)}
@@ -599,7 +664,12 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
             <p data-testid="pending-question">{live.pendingQuestion}</p>
             <label className="field">
               <span>Ответ</span>
-              <textarea data-testid="user-answer" value={answer} onChange={(event) => setAnswer(event.target.value)} />
+              <textarea
+                data-testid="user-answer"
+                value={answer}
+                placeholder="Ответ на вопрос роли"
+                onChange={(event) => setAnswer(event.target.value)}
+              />
             </label>
             <button type="button" className="primary" data-testid="send-answer" disabled={busy || !answer.trim()} onClick={() => void sendAnswer()}>
               Ответить
@@ -609,14 +679,22 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
         {openedStep ? (
           <section className="dialogue" data-testid="dialogue">
             <h2>Диалог · {openedStep.title}</h2>
-            {openedStep.messages.length === 0 ? <p className="hint">Реплик пока нет.</p> : null}
+            {openedStep.messages.length === 0 ? (
+              <p className="hint" data-testid="dialogue-empty">
+                Реплик пока нет. Это диалог выбранной роли.
+              </p>
+            ) : null}
             {openedStep.messages.map((message) => (
               <p key={message.id} className={`bubble ${message.author}`}>
                 {message.text}
               </p>
             ))}
           </section>
-        ) : null}
+        ) : (
+          <p className="hint" data-testid="dialogue-hint">
+            После запуска нажмите роль на холсте: здесь откроется её диалог. Если конвейер ждёт, ответьте на вопрос на этом же экране.
+          </p>
+        )}
         {shown?.project ? (
           <p className="hint">
             Проект: {shown.project.folder ?? 'не задан'}. Правила, навыки и команды берутся из .cursor по путям
