@@ -29,26 +29,28 @@ export function BoardPage() {
   const [newProjectPath, setNewProjectPath] = useState('')
   const [newProjectAlias, setNewProjectAlias] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [projectHintError, setProjectHintError] = useState<string | null>(null)
+  const [inlineProjectError, setInlineProjectError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [over, setOver] = useState<BoardStatus | null>(null)
 
   const selectedWorkflow = workflows.find((item) => item.id === workflowId) ?? null
   const selectedProject = projects.find((item) => item.id === projectId) ?? null
 
-  function validate(): string | null {
-    if (!title.trim()) return 'Напишите название задачи.'
-    if (!projectId) return 'Выберите проект или workspace.'
-    if (!workflowId && pickedAgents.length === 0) {
-      return 'Добавьте агентов или выберите процесс.'
-    }
-    return null
-  }
-
   async function create(event: FormEvent) {
     event.preventDefault()
-    const problem = validate()
-    if (problem) {
-      setError(problem)
+    setProjectHintError(null)
+    if (!title.trim()) {
+      setError('Напишите название задачи.')
+      return
+    }
+    if (!projectId) {
+      setError(null)
+      setProjectHintError('Выберите проект или workspace.')
+      return
+    }
+    if (!workflowId && pickedAgents.length === 0) {
+      setError('Добавьте агентов или выберите процесс.')
       return
     }
     setBusy(true)
@@ -76,20 +78,20 @@ export function BoardPage() {
 
   async function addProjectFromForm() {
     setBusy(true)
-    setError(null)
+    setInlineProjectError(null)
     try {
       const created = await api.addProject({ kind: newProjectKind, path: newProjectPath })
+      upsertProject(created)
+      setProjectId(created.id)
+      setProjectHintError(null)
       if (newProjectAlias.trim()) {
         upsertProject(await api.updateProjectAlias(created.id, newProjectAlias))
-      } else {
-        upsertProject(created)
       }
-      setProjectId(created.id)
       setNewProjectPath('')
       setNewProjectAlias('')
       setAddProjectOpen(false)
     } catch (reason) {
-      setError(messageOf(reason))
+      setInlineProjectError(messageOf(reason))
     } finally {
       setBusy(false)
     }
@@ -184,11 +186,19 @@ export function BoardPage() {
                     label: `${item.label} (${item.kind === 'workspace' ? 'workspace' : 'папка'})`,
                   })),
                 ]}
-                onChange={setProjectId}
+                onChange={(id) => {
+                  setProjectId(id)
+                  setProjectHintError(null)
+                }}
               />
             ) : (
               <p className="hint">Сохранённых проектов пока нет — добавьте ниже.</p>
             )}
+            {projectHintError ? (
+              <p className="error-line" data-testid="task-project-hint">
+                {projectHintError}
+              </p>
+            ) : null}
             {selectedProject ? (
               <p className="where" data-testid="task-project-label">
                 Задача для: {selectedProject.label} ·{' '}
@@ -224,7 +234,7 @@ export function BoardPage() {
                     pickTestId="inline-pick-project-path"
                     disabled={busy}
                     onChange={setNewProjectPath}
-                    onPickError={setError}
+                    onPickError={setInlineProjectError}
                   />
                 </label>
                 <label className="field">
@@ -236,15 +246,22 @@ export function BoardPage() {
                     placeholder="Как показывать в списке"
                   />
                 </label>
-                <button
-                  type="button"
-                  className="primary"
-                  data-testid="save-inline-project"
-                  disabled={busy || !newProjectPath.trim()}
-                  onClick={() => void addProjectFromForm()}
-                >
-                  Сохранить в раздел проектов
-                </button>
+                <div className="row-actions">
+                  <button
+                    type="button"
+                    className="primary"
+                    data-testid="save-inline-project"
+                    disabled={busy || !newProjectPath.trim()}
+                    onClick={() => void addProjectFromForm()}
+                  >
+                    Сохранить в раздел проектов
+                  </button>
+                  {inlineProjectError ? (
+                    <p className="error-line" data-testid="inline-project-error">
+                      {inlineProjectError}
+                    </p>
+                  ) : null}
+                </div>
               </div>
             ) : null}
           </section>
