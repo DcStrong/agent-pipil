@@ -9,10 +9,12 @@ import { href } from '../route'
 import type { PipelinePreset } from '../types'
 
 export function WorkflowsPage() {
-  const { ready, error, workflows, agents, runs, cursor, presets, upsertWorkflow } = useLive()
+  const { ready, error, workflows, agents, runs, cursor, presets, upsertWorkflow, removePreset } = useLive()
   const [setup, setSetup] = useState(false)
   const [opening, setOpening] = useState<string | null>(null)
+  const [removing, setRemoving] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const busy = opening !== null || removing !== null
   const connected = cursor?.connected ?? false
   const online = agents.filter((agent) => agentOnline(agent, connected)).length
 
@@ -30,6 +32,20 @@ export function WorkflowsPage() {
     }
   }
 
+  async function dropPreset(preset: PipelinePreset) {
+    if (preset.builtin) return
+    setRemoving(preset.id)
+    setActionError(null)
+    try {
+      await api.deletePreset(preset.id)
+      removePreset(preset.id)
+    } catch (reason) {
+      setActionError(messageOf(reason))
+    } finally {
+      setRemoving(null)
+    }
+  }
+
   return (
     <div className="page">
       <h1 className="page-title">Процессы</h1>
@@ -44,18 +60,34 @@ export function WorkflowsPage() {
           <p className="preset-lead">Выберите имя — на холсте появится эта цепочка. Свою можно сохранить с холста.</p>
           <div className="preset-grid">
             {presets.map((preset) => (
-              <button
-                key={preset.id}
-                type="button"
-                className="preset-card"
-                data-testid={preset.id}
-                disabled={opening !== null}
-                onClick={() => void openPreset(preset)}
-              >
-                <strong>{preset.name}</strong>
-                <small>{preset.builtin ? 'Встроенный' : 'Свой'}</small>
-                <p>{preset.steps.map((step) => step.title).join(' → ')}</p>
-              </button>
+              <article key={preset.id} className="preset-tile" data-testid={`preset-tile-${preset.id}`}>
+                <button
+                  type="button"
+                  className="preset-card"
+                  data-testid={preset.id}
+                  disabled={busy}
+                  onClick={() => void openPreset(preset)}
+                >
+                  <strong>{preset.name}</strong>
+                  <small>{preset.builtin ? 'Встроенный' : 'Свой'}</small>
+                  <p>{preset.steps.map((step) => step.title).join(' → ')}</p>
+                </button>
+                {preset.builtin ? (
+                  <p className="preset-guard" data-testid={`${preset.id}-remove-hint`}>
+                    Встроенный пресет убрать нельзя.
+                  </p>
+                ) : (
+                  <button
+                    type="button"
+                    className="text-btn"
+                    data-testid={`${preset.id}-remove`}
+                    disabled={busy}
+                    onClick={() => void dropPreset(preset)}
+                  >
+                    Убрать
+                  </button>
+                )}
+              </article>
             ))}
           </div>
         </section>
