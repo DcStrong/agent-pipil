@@ -101,6 +101,80 @@ describe('BoardPage — новая задача', () => {
     expect(api.pickProjectPath).toHaveBeenCalledWith({ kind: 'folder' })
   })
 
+  it('сохранение проекта с формы выбирает его для задачи', async () => {
+    const projects: (typeof liveState)['projects'] = []
+    const upsertProject = vi.fn((project: (typeof projects)[number]) => {
+      projects.push(project)
+    })
+    harness.live = { ...liveState(), projects, upsertProject }
+    vi.mocked(api.addProject).mockResolvedValue({
+      id: 'p-new',
+      kind: 'folder',
+      path: '/Users/dc_strong/myProject',
+      folderName: 'myProject',
+      alias: '',
+      label: 'myProject',
+    })
+    vi.mocked(api.updateProjectAlias).mockResolvedValue({
+      id: 'p-new',
+      kind: 'folder',
+      path: '/Users/dc_strong/myProject',
+      folderName: 'myProject',
+      alias: '123',
+      label: '123',
+    })
+    harness.createTask.mockResolvedValue({
+      id: 't1',
+      title: 'test',
+      description: '123',
+      status: 'new',
+      projectId: 'p-new',
+      projectLabel: '123',
+      workflowId: null,
+      workflowName: null,
+      team: [{ agentId: 'role_analyst', mode: 'ask' }],
+      phase: 'idle',
+      activity: [],
+      plan: null,
+      createdAt: '',
+      updatedAt: '',
+    })
+    render(<BoardPage />)
+    fireEvent.click(screen.getByTestId('new-task'))
+    fireEvent.change(screen.getByTestId('task-title'), { target: { value: 'test' } })
+    fireEvent.click(screen.getByTestId('toggle-add-project'))
+    fireEvent.change(screen.getByTestId('inline-project-path'), {
+      target: { value: '/Users/dc_strong/myProject' },
+    })
+    fireEvent.change(screen.getByTestId('inline-project-alias'), { target: { value: '123' } })
+    fireEvent.click(screen.getByTestId('save-inline-project'))
+    await waitFor(() => expect(upsertProject).toHaveBeenCalled())
+    expect(screen.getByTestId('task-project-label').textContent).toContain('123')
+    fireEvent.click(screen.getByTestId('add-agent'))
+    fireEvent.click(screen.getByText('Аналитик'))
+    fireEvent.click(screen.getByTestId('create-task'))
+    await waitFor(() => expect(harness.createTask).toHaveBeenCalled())
+    expect(harness.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'p-new' }),
+    )
+  })
+
+  it('ошибка сохранения проекта показывается рядом с кнопкой', async () => {
+    harness.live = { ...liveState(), projects: [] }
+    vi.mocked(api.addProject).mockRejectedValue(new Error('Путь не найден'))
+    render(<BoardPage />)
+    fireEvent.click(screen.getByTestId('new-task'))
+    fireEvent.click(screen.getByTestId('toggle-add-project'))
+    fireEvent.change(screen.getByTestId('inline-project-path'), {
+      target: { value: '/missing/path' },
+    })
+    fireEvent.click(screen.getByTestId('save-inline-project'))
+    await waitFor(() =>
+      expect(screen.getByTestId('inline-project-save-error').textContent).toContain('Путь не найден'),
+    )
+    expect(screen.queryByTestId('board-form-error')).toBeNull()
+  })
+
   it('с проектом и агентом создаёт задачу', async () => {
     harness.live = liveState()
     harness.createTask.mockResolvedValue({
