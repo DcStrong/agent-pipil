@@ -3,6 +3,7 @@ import { useState, type FormEvent, type DragEvent } from 'react'
 import { api, messageOf } from '../api'
 import { columnLabel, defaultWorkMode, memberStateLabel, modeLabel } from '../board'
 import { DarkSelect } from '../components/DarkSelect'
+import { ProjectPathInput } from '../components/ProjectPathInput'
 import { IconPlus } from '../components/Icons'
 import { useLive } from '../live'
 import { href } from '../route'
@@ -73,8 +74,7 @@ export function BoardPage() {
     }
   }
 
-  async function addProjectFromForm(event: FormEvent) {
-    event.preventDefault()
+  async function addProjectFromForm() {
     setBusy(true)
     setError(null)
     try {
@@ -169,8 +169,10 @@ export function BoardPage() {
             />
           </label>
 
-          <fieldset className="team-pick">
-            <legend>Проект</legend>
+          <section className="team-pick" aria-labelledby="compose-project">
+            <h3 id="compose-project" className="team-pick-title">
+              Проект
+            </h3>
             {projects.length > 0 ? (
               <DarkSelect
                 testId="task-project"
@@ -203,45 +205,54 @@ export function BoardPage() {
             </button>
             {addProjectOpen ? (
               <div className="inline-add-project" data-testid="inline-add-project">
-                <form onSubmit={(event) => void addProjectFromForm(event)}>
-                  <label className="field">
-                    <span>Тип</span>
-                    <select
-                      value={newProjectKind}
-                      onChange={(event) => setNewProjectKind(event.target.value as SavedProjectKind)}
-                    >
-                      <option value="folder">Папка</option>
-                      <option value="workspace">Файл .code-workspace</option>
-                    </select>
-                  </label>
-                  <label className="field">
-                    <span>Путь</span>
-                    <input
-                      data-testid="inline-project-path"
-                      value={newProjectPath}
-                      onChange={(event) => setNewProjectPath(event.target.value)}
-                      placeholder="Путь на этой машине"
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Алиас (необязательно)</span>
-                    <input
-                      data-testid="inline-project-alias"
-                      value={newProjectAlias}
-                      onChange={(event) => setNewProjectAlias(event.target.value)}
-                      placeholder="Как показывать в списке"
-                    />
-                  </label>
-                  <button type="submit" className="primary" disabled={busy || !newProjectPath.trim()}>
-                    Сохранить в раздел проектов
-                  </button>
-                </form>
+                <label className="field">
+                  <span>Тип</span>
+                  <select
+                    value={newProjectKind}
+                    onChange={(event) => setNewProjectKind(event.target.value as SavedProjectKind)}
+                  >
+                    <option value="folder">Папка</option>
+                    <option value="workspace">Файл .code-workspace</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Путь</span>
+                  <ProjectPathInput
+                    kind={newProjectKind}
+                    value={newProjectPath}
+                    pathTestId="inline-project-path"
+                    pickTestId="inline-pick-project-path"
+                    disabled={busy}
+                    onChange={setNewProjectPath}
+                    onPickError={setError}
+                  />
+                </label>
+                <label className="field">
+                  <span>Алиас (необязательно)</span>
+                  <input
+                    data-testid="inline-project-alias"
+                    value={newProjectAlias}
+                    onChange={(event) => setNewProjectAlias(event.target.value)}
+                    placeholder="Как показывать в списке"
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="primary"
+                  data-testid="save-inline-project"
+                  disabled={busy || !newProjectPath.trim()}
+                  onClick={() => void addProjectFromForm()}
+                >
+                  Сохранить в раздел проектов
+                </button>
               </div>
             ) : null}
-          </fieldset>
+          </section>
 
-          <fieldset className="team-pick">
-            <legend>Исполнители</legend>
+          <section className="team-pick" aria-labelledby="compose-team">
+            <h3 id="compose-team" className="team-pick-title">
+              Исполнители
+            </h3>
             <p className="hint">Либо отдельные агенты с режимом, либо готовый процесс с холста — не оба сразу.</p>
             <div className="row-actions">
               <button
@@ -338,7 +349,7 @@ export function BoardPage() {
                 })}
               </ul>
             ) : null}
-          </fieldset>
+          </section>
 
           <div className="row-actions">
             <button type="submit" className="primary" data-testid="create-task" disabled={busy || !title.trim()}>

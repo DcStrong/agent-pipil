@@ -123,6 +123,11 @@ export const api = {
   projects: () => request<SavedProject[]>('/api/projects'),
   addProject: (body: { kind: SavedProjectKind; path: string }) =>
     request<SavedProject>('/api/projects', { method: 'POST', body: JSON.stringify(body) }),
+  pickProjectPath: (body: { kind: SavedProjectKind }) =>
+    request<{ cancelled: true } | { path: string }>('/api/projects/pick-path', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   updateProjectAlias: (id: string, alias: string) =>
     request<SavedProject>(`/api/projects/${id}`, {
       method: 'PATCH',
