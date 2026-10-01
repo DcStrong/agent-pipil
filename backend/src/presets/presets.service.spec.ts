@@ -225,9 +225,19 @@ describe('PresetsService', () => {
     );
   });
 
+  it('open не добавляет процесс в store — только черновик для холста', async () => {
+    const { presets, store } = await make();
+    const before = store.read().workflows.length;
+    presets.open('preset_feature');
+    expect(store.read().workflows.length).toBe(before);
+  });
+
   it('запуск с пресета остаётся имитацией и не включает живой Cursor', async () => {
-    const { presets, runs } = await make();
+    const { presets, runs, store } = await make();
     const workflow = presets.open('preset_question');
+    store.mutate((state) => {
+      state.workflows.push(workflow);
+    });
     expect(workflow.steps).toHaveLength(1);
     expect(workflow.steps[0]?.mode).toBe('question');
     const started = runs.start(workflow.id, 'Почему падает сборка?');

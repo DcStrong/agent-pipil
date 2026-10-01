@@ -67,6 +67,10 @@ export const api = {
   workflow: (id: string) => request<Workflow>(`/api/workflows/${id}`),
   createWorkflow: (name: string) =>
     request<Workflow>('/api/workflows', { method: 'POST', body: JSON.stringify({ name }) }),
+  workflowTemplate: (name: string) =>
+    request<Workflow>(`/api/workflows/template?name=${encodeURIComponent(name)}`),
+  publishWorkflow: (body: { name: string; description: string; steps: WorkflowStep[] }) =>
+    request<Workflow>('/api/workflows', { method: 'POST', body: JSON.stringify(body) }),
   saveWorkflow: (
     id: string,
     body: { name: string; description: string; steps: WorkflowStep[] },

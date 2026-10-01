@@ -7,6 +7,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
 } from '@nestjs/common';
 import type { Workflow } from '../domain';
 import { WorkflowsService, type StepInput } from './workflows.service';
@@ -27,6 +28,12 @@ export class WorkflowsController {
     return this.workflows.list();
   }
 
+  @Get('template')
+  template(@Query('name') name?: string): Workflow {
+    const label = typeof name === 'string' && name.trim() ? name : 'Новый процесс';
+    return this.workflows.template(label);
+  }
+
   @Get(':id')
   get(@Param('id') id: string): Workflow {
     return this.workflows.get(id);
@@ -37,6 +44,16 @@ export class WorkflowsController {
     const record = asRecord(body);
     if (typeof record.name !== 'string')
       throw new BadRequestException('Нужно имя процесса.');
+    if (Array.isArray(record.steps)) {
+      if (typeof record.description !== 'string') {
+        throw new BadRequestException('Нужно описание процесса.');
+      }
+      return this.workflows.publish(
+        record.name,
+        record.description,
+        record.steps as StepInput[],
+      );
+    }
     return this.workflows.create(record.name);
   }
 

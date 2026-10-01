@@ -11,6 +11,12 @@ import { href } from '../route'
 import { hasCycle, materialize, orderSteps, withHandoffs } from '../step-graph'
 import { v4 as uuidv4 } from 'uuid'
 import type { Agent, AgentKind, Run, StepMode, TaskPlan, Workflow, WorkflowStep } from '../types'
+import {
+  isWorkflowDraft,
+  loadWorkflowDraft,
+  removeWorkflowDraft,
+  saveWorkflowDraft,
+} from '../workflow-draft'
 
 const TASK_ROLES: AgentKind[] = ['orchestrator', 'analyst', 'architect', 'developer', 'tester']
 
@@ -27,7 +33,9 @@ const MODE_OPTIONS = [
 export function CanvasPage({ workflowId }: { workflowId: string }) {
   const { ready, workflows, agents, runs, presets, reload, upsertRun, upsertWorkflow, upsertPreset, removePreset } =
     useLive()
-  const workflow = workflows.find((item) => item.id === workflowId)
+  const persisted = workflows.find((item) => item.id === workflowId)
+  const workflow = persisted ?? loadWorkflowDraft(workflowId)
+  const isDraft = isWorkflowDraft(workflowId) && !persisted
   const [draft, setDraft] = useState<Workflow | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [opened, setOpened] = useState<string | null>(null)
@@ -60,7 +68,7 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
 
   // Список мог ещё не содержать только что созданный процесс. Берём его с сервера, не показывая «не найден».
   useEffect(() => {
-    if (!ready || workflow) return
+    if (!ready || workflow || isWorkflowDraft(workflowId)) return
     let cancel = false
     void api
       .workflow(workflowId)
@@ -265,12 +273,24 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
     setBusy(true)
     setError(null)
     try {
-      const saved = await api.saveWorkflow(source.id, {
-        name: source.name,
-        description: source.description,
-        steps: next,
-      })
+      const saved = isDraft
+        ? await api.publishWorkflow({
+            name: source.name,
+            description: source.description,
+            steps: next,
+          })
+        : await api.saveWorkflow(source.id, {
+            name: source.name,
+            description: source.description,
+            steps: next,
+          })
+      if (isDraft) {
+        removeWorkflowDraft(source.id)
+      }
       upsertWorkflow(saved)
+      if (isDraft && saved.id !== source.id) {
+        window.location.replace(href({ name: 'canvas', workflowId: saved.id }))
+      }
       await reload()
     } catch (reason) {
       setError(messageOf(reason))
