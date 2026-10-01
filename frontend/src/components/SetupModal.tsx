@@ -85,7 +85,7 @@ export function SetupModal({
         <header className="modal-head">
           <div>
             <h2 id="setup-title">Настройка процессов</h2>
-            <p>Создаём нужных агентов, затем публикуем выбранный процесс.</p>
+            <p>Создаём нужных агентов, затем откроем холст. В список процесс попадёт после «Сохранить».</p>
           </div>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Закрыть">
             <IconClose />
@@ -115,8 +115,8 @@ export function SetupModal({
               <AgentLine
                 phase={current.flow}
                 name={name.trim() || 'Новый процесс'}
-                creating="Публикуем процесс…"
-                created="Процесс опубликован"
+                creating="Открываем холст…"
+                created="Холст готов"
                 last
               />
             </div>

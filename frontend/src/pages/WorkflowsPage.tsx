@@ -92,7 +92,9 @@ export function WorkflowsPage() {
           <header className="card-head">
             <span>Пресеты</span>
           </header>
-          <p className="preset-lead">Выберите имя — на холсте появится эта цепочка. Свою можно сохранить с холста.</p>
+          <p className="preset-lead">
+            Выберите имя — откроется холст с этой цепочкой. Чтобы процесс появился в списке ниже, сохраните его на холсте.
+          </p>
           <div className="preset-grid">
             {presets.map((preset) => (
               <article key={preset.id} className="preset-tile" data-testid={`preset-tile-${preset.id}`}>
