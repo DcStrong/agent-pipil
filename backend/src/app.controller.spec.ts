@@ -9,7 +9,7 @@ describe('AppController', () => {
       providers: [
         {
           provide: SettingsService,
-          useValue: { hasToken: () => false },
+          useValue: { cursorReady: () => false },
         },
       ],
     }).compile();

@@ -87,7 +87,7 @@ export function harnessLabel(harness: Harness): string {
   return harness === 'cursor' ? 'Cursor' : 'Имитация'
 }
 
-/** Имитация всегда «в сети». Cursor — только когда токен сохранён на сервере. */
+/** Имитация всегда «в сети». Cursor — когда режим готов (CLI на сервере или API-токен). */
 export function agentOnline(agent: Agent, cursorConnected: boolean): boolean {
   if (agent.harness === 'simulated') return true
   return cursorConnected

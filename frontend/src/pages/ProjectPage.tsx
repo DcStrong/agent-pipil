@@ -277,8 +277,11 @@ export function ProjectPage() {
       <h1 className="page-title">Проект</h1>
       <p className="page-lead" data-testid="cursor-disconnected">
         Список локальных папок и файлов <code>.code-workspace</code> хранится на сервере. Для живого шага Cursor
-        выберите проект ниже и сохраните API-токен в настройках
-        {cursor?.connected ? ' (подключён)' : ' (не подключён — шаг Cursor завершится ошибкой)'}.
+        выберите проект ниже
+        {cursor?.mode === 'api'
+          ? ` и сохраните API-токен в настройках${cursor.connected ? ' (подключён)' : ' (не подключён — шаг Cursor завершится ошибкой)'}`
+          : `${cursor?.connected ? ' (CLI на сервере готов)' : ' (на сервере не найден CLI «agent» — шаг Cursor завершится ошибкой)'}`}
+        .
       </p>
 
       <section className="card" data-testid="saved-projects">

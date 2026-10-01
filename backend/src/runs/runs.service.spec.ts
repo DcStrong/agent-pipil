@@ -1,7 +1,7 @@
 import { ConflictException } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ProjectsService } from '../projects/projects.service';
@@ -9,6 +9,7 @@ import { SettingsService } from '../settings/settings.service';
 import { StoreService } from '../store/store.service';
 import { DATA_PATH } from '../store/store.tokens';
 import { WorkflowsService } from '../workflows/workflows.service';
+import { setCursorCliExecForTests } from '../runtime/cursor-cli';
 import { RunsService } from './runs.service';
 
 function installCursorFetchMock(): () => void {
@@ -117,6 +118,7 @@ describe('RunsService', () => {
     const settings = moduleRef.get(SettingsService);
     const store = moduleRef.get(StoreService);
     const projectId = seedProject(store, directory);
+    settings.setMode('api');
     if (options?.token !== false) {
       settings.save('cursor_test_token_value');
     }
@@ -284,13 +286,43 @@ describe('RunsService', () => {
       connected: true,
       source: 'saved',
       hint: '••••alue',
+      mode: 'api',
     });
     expect(JSON.stringify(saved)).not.toContain(secret);
     expect(settings.clear()).toEqual({
       connected: false,
       source: 'none',
       hint: null,
+      mode: 'api',
     });
+  });
+
+  it('в режиме CLI вызывает подменённый agent без сети', async () => {
+    setCursorCliExecForTests(async () => ({
+      stdout: 'Ответ локального CLI.',
+      stderr: '',
+      code: 0,
+    }));
+    const previousBin = process.env.CURSOR_AGENT_BIN;
+    try {
+      const { runs, projectId, settings } = await make({ token: false });
+      const fakeAgent = join(directory, 'fake-agent');
+      await writeFile(fakeAgent, '#!/bin/sh\n');
+      await chmod(fakeAgent, 0o755);
+      process.env.CURSOR_AGENT_BIN = fakeAgent;
+      settings.setMode('cli');
+      const started = runs.start('workflow_supervised', 'Проверка CLI', {
+        roleIds: ['agent_builder'],
+        projectId,
+      });
+      const done = await until(runs, started.id, 'completed');
+      expect(done.status).toBe('completed');
+      expect(done.work.some((item) => item.output.includes('локального CLI'))).toBe(true);
+    } finally {
+      setCursorCliExecForTests(null);
+      if (previousBin === undefined) delete process.env.CURSOR_AGENT_BIN;
+      else process.env.CURSOR_AGENT_BIN = previousBin;
+    }
   });
 
   async function until(runs: RunsService, id: string, status: string) {

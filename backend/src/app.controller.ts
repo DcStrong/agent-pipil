@@ -7,6 +7,6 @@ export class AppController {
 
   @Get('health')
   health(): { ok: true; cursorConnected: boolean } {
-    return { ok: true, cursorConnected: this.settings.hasToken() };
+    return { ok: true, cursorConnected: this.settings.cursorReady() };
   }
 }

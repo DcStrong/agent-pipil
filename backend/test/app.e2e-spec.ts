@@ -58,6 +58,10 @@ describe('Оркестратор (e2e)', () => {
     configureApp(app);
     await app.init();
     await app.listen(0, '127.0.0.1');
+    await request(app.getHttpServer())
+      .patch('/api/settings/cursor/mode')
+      .send({ mode: 'api' })
+      .expect(200);
   });
 
   afterAll(async () => {
@@ -88,6 +92,7 @@ describe('Оркестратор (e2e)', () => {
       connected: true,
       source: 'saved',
       hint: '••••oken',
+      mode: 'api',
     });
     expect(JSON.stringify(saved.body)).not.toContain(secret);
 

@@ -4,6 +4,7 @@ import type {
   BoardStatus,
   BoardTask,
   CursorConnection,
+  CursorConnectionMode,
   SavedProject,
   SavedProjectKind,
   CursorFileDocument,
@@ -151,6 +152,11 @@ export const api = {
       body: JSON.stringify({ token }),
     }),
   clearCursor: () => request<CursorConnection>('/api/settings/cursor', { method: 'DELETE' }),
+  saveCursorMode: (mode: CursorConnectionMode) =>
+    request<CursorConnection>('/api/settings/cursor/mode', {
+      method: 'PATCH',
+      body: JSON.stringify({ mode }),
+    }),
   board: () => request<BoardTask[]>('/api/board'),
   createTask: (body: {
     title: string

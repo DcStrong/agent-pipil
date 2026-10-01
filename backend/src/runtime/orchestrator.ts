@@ -9,7 +9,9 @@ import type {
   RunStep,
   TaskPlan,
 } from '../domain';
+import { runCursorCliStep } from './cursor-cli';
 import { CursorClient } from './cursor-client';
+import type { CursorConnectionMode } from '../domain';
 import { writeProjectMap } from './project-folder';
 import { briefLine, roleTurn } from './role-turn';
 import { SimulatedAgent } from './simulated-agent';
@@ -163,6 +165,7 @@ export class Orchestrator {
       delayMs?: number;
       cursorConnected: boolean;
       live: boolean;
+      cursorMode: CursorConnectionMode;
       cursorToken: string | null;
       projectFolder: string | null;
       workspaceFile: string | null;
@@ -191,6 +194,7 @@ export class Orchestrator {
       delayMs?: number;
       cursorConnected: boolean;
       live: boolean;
+      cursorMode: CursorConnectionMode;
       cursorToken: string | null;
       projectFolder: string | null;
       workspaceFile: string | null;
@@ -287,6 +291,7 @@ export class Orchestrator {
     options: {
       cursorConnected: boolean;
       live: boolean;
+      cursorMode: CursorConnectionMode;
       cursorToken: string | null;
       projectFolder: string | null;
       workspaceFile: string | null;
@@ -306,10 +311,14 @@ export class Orchestrator {
     const viaCursor = step.harness === 'cursor';
     const note = viaCursor
       ? options.live
-        ? `${step.agentName} ведёт «${step.title}» через Cloud Agents API Cursor.`
-        : !options.cursorConnected
+        ? options.cursorMode === 'cli'
+          ? `${step.agentName} ведёт «${step.title}» через локальный CLI Cursor в папке проекта.`
+          : `${step.agentName} ведёт «${step.title}» через Cloud Agents API Cursor.`
+        : options.cursorMode === 'api' && !options.cursorConnected
           ? `${step.agentName} не может вызвать Cursor: токен не задан.`
-          : `${step.agentName} не может вызвать Cursor: живой режим выключен (CURSOR_LIVE=0).`
+          : options.cursorMode === 'cli' && !options.cursorConnected
+            ? `${step.agentName} не может вызвать Cursor: CLI «agent» не найден на сервере.`
+            : `${step.agentName} не может вызвать Cursor: живой режим выключен (CURSOR_LIVE=0).`
       : `${step.agentName} открыл новый диалог «${step.title}».`;
     run.events.push({
       id: randomUUID(),
@@ -328,15 +337,28 @@ export class Orchestrator {
     }
 
     if (viaCursor) {
-      if (!options.cursorConnected || !options.cursorToken) {
-        throw new Error(
-          'Нельзя выполнить шаг Cursor: API-токен не сохранён на сервере. Задайте токен в настройках.',
-        );
-      }
       if (!options.live || !this.cursor.liveEnabled()) {
         throw new Error(
           'Нельзя выполнить шаг Cursor: живой вызов отключён переменной CURSOR_LIVE=0 на сервере.',
         );
+      }
+      if (options.cursorMode === 'api') {
+        if (!options.cursorConnected || !options.cursorToken) {
+          throw new Error(
+            'Нельзя выполнить шаг Cursor: API-токен не сохранён на сервере. Задайте токен в настройках.',
+          );
+        }
+      } else {
+        if (!options.cursorConnected) {
+          throw new Error(
+            'Нельзя выполнить шаг Cursor: на сервере не найден CLI «agent». Установите Cursor CLI и добавьте его в PATH на машине, где работает backend.',
+          );
+        }
+        if (!options.projectFolder && !options.workspaceFile) {
+          throw new Error(
+            'Нельзя выполнить шаг Cursor: не указана папка проекта или workspace на сервере.',
+          );
+        }
       }
     }
 
@@ -345,8 +367,8 @@ export class Orchestrator {
     ).length;
     let first;
     if (viaCursor && options.live) {
-      const cursorResult = await this.cursor.runStep({
-        token: options.cursorToken!,
+      const stepInput = {
+        token: options.cursorToken ?? '',
         task: run.task,
         stepTitle: step.title,
         agentName: step.agentName,
@@ -354,16 +376,22 @@ export class Orchestrator {
         skills: step.skills,
         projectFolder: options.projectFolder,
         workspaceFile: options.workspaceFile,
-      });
+      };
+      const cursorResult =
+        options.cursorMode === 'cli'
+          ? await runCursorCliStep(stepInput)
+          : await this.cursor.runStep(stepInput);
       const link =
         cursorResult.agentUrl != null
           ? ` Ссылка: ${cursorResult.agentUrl}.`
           : '';
+      const via =
+        options.cursorMode === 'cli' ? 'Cursor CLI' : 'Cloud Agents API';
       run.events.push({
         id: randomUUID(),
         at: new Date().toISOString(),
         kind: 'progress',
-        message: `Cursor ответил на «${step.title}».${link}`,
+        message: `${via} ответил на «${step.title}».${link}`,
         stepIndex: index,
       });
       tell();

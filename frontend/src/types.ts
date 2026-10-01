@@ -219,10 +219,13 @@ export interface CursorProjectView {
   recommendation: CursorRecommendation
 }
 
+export type CursorConnectionMode = 'cli' | 'api'
+
 export interface CursorConnection {
   connected: boolean
   source: 'none' | 'saved' | 'env'
   hint: string | null
+  mode: CursorConnectionMode
 }
 
 export type SavedProjectKind = 'folder' | 'workspace'
