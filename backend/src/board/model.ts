@@ -42,6 +42,12 @@ export interface BoardTask {
   title: string;
   description: string;
   status: BoardStatus;
+  /** Сохранённый проект или workspace для живого запуска. */
+  projectId: string;
+  projectLabel: string;
+  /** Если задан — команда взята из процесса на холсте. */
+  workflowId: string | null;
+  workflowName: string | null;
   team: TeamMember[];
   phase: BoardPhase;
   activity: BoardActivity[];
@@ -180,11 +186,25 @@ function parsePlan(value: unknown): BoardPlan | null {
 
 function parseTask(value: unknown): BoardTask {
   if (!isRecord(value) || !Array.isArray(value.team)) fail('задача доски');
+  const workflowId = value.workflowId;
+  const workflowName = value.workflowName;
   return {
     id: text(value.id, 'id задачи'),
     title: text(value.title, 'название задачи'),
     description: text(value.description, 'описание задачи'),
     status: boardStatus(value.status),
+    projectId:
+      typeof value.projectId === 'string' ? value.projectId : '',
+    projectLabel:
+      typeof value.projectLabel === 'string' ? value.projectLabel : '',
+    workflowId:
+      workflowId === null || workflowId === undefined
+        ? null
+        : text(workflowId, 'процесс задачи'),
+    workflowName:
+      workflowName === null || workflowName === undefined
+        ? null
+        : text(workflowName, 'имя процесса задачи'),
     team: value.team.map(parseMember),
     phase: boardPhase(value.phase),
     activity: Array.isArray(value.activity)

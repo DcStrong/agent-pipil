@@ -916,6 +916,11 @@ code { font-family: ui-monospace, monospace; font-size: 0.92em; }
 }
 .board-head .primary svg { width: 16px; height: 16px; }
 .compose { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.picker-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.picker-list button { width: 100%; text-align: left; padding: 8px 10px; border-radius: 8px; border: 1px solid #2a2a30; background: #141418; color: inherit; cursor: pointer; }
+.picker-list small { display: block; opacity: 0.7; margin-top: 2px; }
+.picked-agents { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.inline-add-project { margin-top: 10px; padding-top: 10px; border-top: 1px solid #222226; }
 .team-pick {
   border: 0;
   margin: 0;

@@ -2,7 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
@@ -145,11 +145,18 @@ describe('Оркестратор (e2e)', () => {
       .send({ token: secret })
       .expect(200);
 
+    const project = await request(server)
+      .post('/api/projects')
+      .send({ kind: 'folder', path: dirname(process.env.DATA_PATH!) })
+      .expect(201);
+    const projectId = project.body.id as string;
+
     const created = await request(server)
       .post('/api/board')
       .send({
         title: 'Доска',
         description: 'Нужен план до сборки',
+        projectId,
         team: [
           { agentId: 'role_architect', mode: 'plan' },
           { agentId: 'agent_builder', mode: 'agent' },
@@ -160,6 +167,7 @@ describe('Оркестратор (e2e)', () => {
       .post('/api/board')
       .send({
         title: 'Только вопрос',
+        projectId,
         team: [{ agentId: 'role_analyst', mode: 'ask' }],
       })
       .expect(201);

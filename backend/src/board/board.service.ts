@@ -11,7 +11,9 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import type { Agent } from '../domain';
+import type { Agent, StepMode } from '../domain';
+import { displayName } from '../runtime/saved-project';
+import { orderSteps } from '../runtime/step-graph';
 import { readDelayMs } from '../runtime/orchestrator';
 import { StoreService } from '../store/store.service';
 import {
@@ -29,6 +31,12 @@ import {
 export interface TeamInput {
   agentId: string;
   mode?: WorkMode;
+}
+
+export interface CreateTaskInput {
+  projectId: string;
+  team?: TeamInput[];
+  workflowId?: string;
 }
 
 @Injectable()
@@ -57,7 +65,11 @@ export class BoardService implements OnModuleInit, OnModuleDestroy {
     return this.must(id);
   }
 
-  create(title: string, description: string, team: TeamInput[]): BoardTask {
+  create(
+    title: string,
+    description: string,
+    input: CreateTaskInput,
+  ): BoardTask {
     const cleanTitle = title.trim();
     if (!cleanTitle) {
       throw new BadRequestException('Сначала напишите название задачи.');
@@ -69,13 +81,58 @@ export class BoardService implements OnModuleInit, OnModuleDestroy {
     if (cleanDescription.length > 4000) {
       throw new BadRequestException('Описание короче 4000 символов.');
     }
-    const members = this.resolveTeam(team);
+    const projectId = input.projectId?.trim() ?? '';
+    if (!projectId) {
+      throw new BadRequestException(
+        'Выберите проект или workspace для задачи.',
+      );
+    }
+    const state = this.store.read();
+    const project = state.projects.find((item) => item.id === projectId);
+    if (!project) {
+      throw new BadRequestException('Выбранный проект не найден на сервере.');
+    }
+    const workflowId = input.workflowId?.trim() ?? '';
+    const manualTeam = input.team ?? [];
+    const hasWorkflow = workflowId.length > 0;
+    const hasTeam = manualTeam.length > 0;
+    if (hasWorkflow && hasTeam) {
+      throw new BadRequestException(
+        'Нельзя одновременно выбрать процесс и отдельных агентов.',
+      );
+    }
+    if (!hasWorkflow && !hasTeam) {
+      throw new BadRequestException(
+        'Добавьте агентов или выберите процесс для задачи.',
+      );
+    }
+    let members: TeamMember[];
+    let workflowName: string | null = null;
+    let storedWorkflowId: string | null = null;
+    if (hasWorkflow) {
+      const workflow = state.workflows.find((item) => item.id === workflowId);
+      if (!workflow) {
+        throw new BadRequestException('Выбранный процесс не найден.');
+      }
+      if (workflow.steps.length === 0) {
+        throw new BadRequestException('В выбранном процессе нет шагов.');
+      }
+      members = this.teamFromWorkflow(workflow.steps, state.agents);
+      workflowName = workflow.name;
+      storedWorkflowId = workflow.id;
+    } else {
+      members = this.resolveTeam(manualTeam);
+    }
     const now = new Date().toISOString();
     const task: BoardTask = {
       id: randomUUID(),
       title: cleanTitle,
       description: cleanDescription,
       status: 'new',
+      projectId: project.id,
+      projectLabel: displayName(project),
+      workflowId: storedWorkflowId,
+      workflowName,
       team: members,
       phase: 'idle',
       activity: [],
@@ -172,6 +229,33 @@ export class BoardService implements OnModuleInit, OnModuleDestroy {
     });
     this.schedule(id, () => this.finishBuild(id));
     return this.must(id);
+  }
+
+  private teamFromWorkflow(
+    steps: Array<{ agentId: string; mode: StepMode }>,
+    agents: Agent[],
+  ): TeamMember[] {
+    const ordered = orderSteps(steps);
+    const seen = new Set<string>();
+    const members: TeamMember[] = [];
+    for (const step of ordered) {
+      if (seen.has(step.agentId)) continue;
+      const agent = agents.find((item) => item.id === step.agentId);
+      if (!agent) {
+        throw new BadRequestException(
+          'Процесс ссылается на удалённого агента.',
+        );
+      }
+      seen.add(step.agentId);
+      members.push({
+        agentId: agent.id,
+        mode: workModeFromStep(step.mode),
+      });
+    }
+    if (members.length === 0) {
+      throw new BadRequestException('Из процесса не получилось собрать команду.');
+    }
+    return members;
   }
 
   private resolveTeam(team: TeamInput[]): TeamMember[] {
@@ -339,6 +423,12 @@ function pickup(member: TeamMember, agent: Agent | undefined): BoardActivity {
       ? 'Взял задачу. Токен на вызов не тратится, ход имитируется.'
       : 'Взял задачу.',
   };
+}
+
+function workModeFromStep(mode: StepMode): WorkMode {
+  if (mode === 'question' || mode === 'ask') return 'ask';
+  if (mode === 'plan') return 'plan';
+  return 'agent';
 }
 
 function askNote(name: string): string {

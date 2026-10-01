@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -39,10 +40,26 @@ describe('BoardService', () => {
     if (directory) await rm(directory, { recursive: true, force: true });
   });
 
+  function seedProject(store: StoreService, folder: string): string {
+    const id = randomUUID();
+    store.mutate((state) => {
+      state.projects.push({
+        id,
+        kind: 'folder',
+        path: folder,
+        folderName: 'test-proj',
+        alias: '',
+      });
+    });
+    return id;
+  }
+
   async function make(path = ''): Promise<{
     board: BoardService;
     agents: AgentsService;
     settings: SettingsService;
+    store: StoreService;
+    projectId: string;
   }> {
     if (!path) directory = await mkdtemp(join(tmpdir(), 'pipil-board-'));
     moduleRef = await Test.createTestingModule({
@@ -54,22 +71,27 @@ describe('BoardService', () => {
         { provide: DATA_PATH, useValue: path || join(directory, 'state.json') },
       ],
     }).compile();
+    const store = moduleRef.get(StoreService);
+    const projectId = seedProject(store, path || directory);
     return {
       board: moduleRef.get(BoardService),
       agents: moduleRef.get(AgentsService),
       settings: moduleRef.get(SettingsService),
+      store,
+      projectId,
     };
   }
 
   it('создаёт несколько задач в колонке new и по переносу запускает команду', async () => {
-    const { board } = await make();
-    const first = board.create('Выгрузка', 'Нужен массив заказов', [
-      { agentId: 'role_architect' },
-      { agentId: 'role_developer' },
-    ]);
-    const second = board.create('Подсказка', 'Короткий вопрос', [
-      { agentId: 'role_tester', mode: 'ask' },
-    ]);
+    const { board, projectId } = await make();
+    const first = board.create('Выгрузка', 'Нужен массив заказов', {
+      projectId,
+      team: [{ agentId: 'role_architect' }, { agentId: 'role_developer' }],
+    });
+    const second = board.create('Подсказка', 'Короткий вопрос', {
+      projectId,
+      team: [{ agentId: 'role_tester', mode: 'ask' }],
+    });
     expect(board.list().map((task) => task.status)).toEqual(['new', 'new']);
     expect(first.phase).toBe('idle');
     expect(second.team[0]?.mode).toBe('ask');
@@ -97,13 +119,16 @@ describe('BoardService', () => {
   });
 
   it('не пускает на проверку мимо плана и сборки, правку отдаёт в сборку', async () => {
-    const { board } = await make();
-    const task = board.create('Контракт', 'Один объект', [
-      { agentId: 'agent_planner', mode: 'plan' },
-      { agentId: 'role_architect', mode: 'plan' },
-      { agentId: 'agent_builder', mode: 'agent' },
-      { agentId: 'agent_reviewer', mode: 'agent' },
-    ]);
+    const { board, projectId } = await make();
+    const task = board.create('Контракт', 'Один объект', {
+      projectId,
+      team: [
+        { agentId: 'agent_planner', mode: 'plan' },
+        { agentId: 'role_architect', mode: 'plan' },
+        { agentId: 'agent_builder', mode: 'agent' },
+        { agentId: 'agent_reviewer', mode: 'agent' },
+      ],
+    });
     expect(() => board.move(task.id, 'review')).toThrow(BadRequestException);
     expect(board.get(task.id).status).toBe('new');
     expect(() => board.handToBuild(task.id)).toThrow(/план/i);
@@ -139,11 +164,14 @@ describe('BoardService', () => {
   });
 
   it('режим вопроса заканчивается проверкой и не требует плана', async () => {
-    const { board } = await make();
-    const task = board.create('Спросить', 'Что уже есть в проекте?', [
-      { agentId: 'role_analyst', mode: 'ask' },
-      { agentId: 'role_tester', mode: 'ask' },
-    ]);
+    const { board, projectId } = await make();
+    const task = board.create('Спросить', 'Что уже есть в проекте?', {
+      projectId,
+      team: [
+        { agentId: 'role_analyst', mode: 'ask' },
+        { agentId: 'role_tester', mode: 'ask' },
+      ],
+    });
     board.move(task.id, 'in_progress');
     await settle();
     const done = board.get(task.id);
@@ -155,17 +183,20 @@ describe('BoardService', () => {
   });
 
   it('план может составить не архитектор, а любой агент в режиме плана', async () => {
-    const { board, agents } = await make();
+    const { board, agents, projectId } = await make();
     const custom = agents.create(
       'Исследователь',
       'custom',
       'Смотрю задачу и пишу план.',
       'simulated',
     );
-    const task = board.create('Чужой план', 'Нужна схема', [
-      { agentId: 'role_architect', mode: 'ask' },
-      { agentId: custom.id, mode: 'plan' },
-    ]);
+    const task = board.create('Чужой план', 'Нужна схема', {
+      projectId,
+      team: [
+        { agentId: 'role_architect', mode: 'ask' },
+        { agentId: custom.id, mode: 'plan' },
+      ],
+    });
     board.move(task.id, 'in_progress');
     await settle();
     expect(board.get(task.id).plan?.authorName).toBe('Исследователь');
@@ -178,12 +209,15 @@ describe('BoardService', () => {
     const original = globalThis.fetch;
     globalThis.fetch = fetchMock as typeof fetch;
     try {
-      const { board, settings } = await make();
+      const { board, settings, projectId } = await make();
       settings.save('cursor_secret_token');
-      const task = board.create('Живой не нужен', 'Собрать ручку', [
-        { agentId: 'role_architect', mode: 'plan' },
-        { agentId: 'agent_builder', mode: 'agent' },
-      ]);
+      const task = board.create('Живой не нужен', 'Собрать ручку', {
+        projectId,
+        team: [
+          { agentId: 'role_architect', mode: 'plan' },
+          { agentId: 'agent_builder', mode: 'agent' },
+        ],
+      });
       const moved = board.move(task.id, 'in_progress');
       expect(
         moved.activity.find((item) => item.agentName === 'Сборщик')?.note,
@@ -204,12 +238,39 @@ describe('BoardService', () => {
     }
   });
 
+  it('без проекта или без исполнителей не создаёт задачу', async () => {
+    const { board, projectId } = await make();
+    expect(() =>
+      board.create('Пусто', '', {
+        projectId: '',
+        team: [{ agentId: 'role_analyst' }],
+      }),
+    ).toThrow(/проект/i);
+    expect(() =>
+      board.create('Без команды', '', { projectId, team: [] }),
+    ).toThrow(/агентов|процесс/i);
+  });
+
+  it('создаёт задачу с процессом вместо ручного выбора агентов', async () => {
+    const { board, projectId, store } = await make();
+    const workflow = store.read().workflows[0];
+    const task = board.create('Из процесса', 'Описание', {
+      projectId,
+      workflowId: workflow.id,
+    });
+    expect(task.workflowId).toBe(workflow.id);
+    expect(task.workflowName).toBe(workflow.name);
+    expect(task.team.length).toBe(workflow.steps.length);
+    expect(task.projectLabel).toBe('test-proj');
+  });
+
   it('после перезапуска доводит уже отданную сборку до проверки', async () => {
-    const { board } = await make();
+    const { board, projectId } = await make();
     await moduleRef?.init();
-    const task = board.create('Дожать', 'Уже есть план', [
-      { agentId: 'role_architect', mode: 'plan' },
-    ]);
+    const task = board.create('Дожать', 'Уже есть план', {
+      projectId,
+      team: [{ agentId: 'role_architect', mode: 'plan' }],
+    });
     board.move(task.id, 'in_progress');
     await settle();
     process.env.SIM_DELAY_MS = '10000';

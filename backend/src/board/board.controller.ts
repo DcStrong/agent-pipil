@@ -75,10 +75,34 @@ export class BoardController {
     ) {
       throw new BadRequestException('Описание должно быть строкой.');
     }
+    const workflowId = record.workflowId;
+    if (
+      workflowId !== undefined &&
+      workflowId !== null &&
+      typeof workflowId !== 'string'
+    ) {
+      throw new BadRequestException('workflowId должен быть строкой.');
+    }
+    const projectId = record.projectId;
+    if (typeof projectId !== 'string') {
+      throw new BadRequestException('Нужен projectId — проект или workspace.');
+    }
+    const teamRaw = record.team;
+    let team: TeamInput[] | undefined;
+    if (teamRaw !== undefined) {
+      team = teamOf(teamRaw);
+    }
     return this.board.create(
       record.title,
       typeof record.description === 'string' ? record.description : '',
-      teamOf(record.team),
+      {
+        projectId,
+        team,
+        workflowId:
+          typeof workflowId === 'string' && workflowId.trim()
+            ? workflowId.trim()
+            : undefined,
+      },
     );
   }
 

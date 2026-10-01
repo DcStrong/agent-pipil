@@ -147,8 +147,13 @@ export const api = {
     }),
   clearCursor: () => request<CursorConnection>('/api/settings/cursor', { method: 'DELETE' }),
   board: () => request<BoardTask[]>('/api/board'),
-  createTask: (body: { title: string; description: string; team: TeamMember[] }) =>
-    request<BoardTask>('/api/board', { method: 'POST', body: JSON.stringify(body) }),
+  createTask: (body: {
+    title: string
+    description: string
+    projectId: string
+    team?: TeamMember[]
+    workflowId?: string
+  }) => request<BoardTask>('/api/board', { method: 'POST', body: JSON.stringify(body) }),
   moveTask: (id: string, status: BoardStatus) =>
     request<BoardTask>(`/api/board/${id}/move`, { method: 'POST', body: JSON.stringify({ status }) }),
   saveBoardPlan: (id: string, text: string) =>

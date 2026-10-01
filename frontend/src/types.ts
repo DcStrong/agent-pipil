@@ -274,6 +274,10 @@ export interface BoardTask {
   title: string
   description: string
   status: BoardStatus
+  projectId: string
+  projectLabel: string
+  workflowId: string | null
+  workflowName: string | null
   team: TeamMember[]
   phase: BoardPhase
   activity: BoardActivity[]
