@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { tokenHint, type CursorConnectionMode } from '../domain';
 import {
+  CLI_LOGIN_NO_URL_MESSAGE,
   type CliLoginSnapshot,
   queryCliAuthStatus,
   runCliLogin,
@@ -264,14 +265,29 @@ export class SettingsService {
   private async runLoginTask(env: NodeJS.ProcessEnv): Promise<void> {
     try {
       const outcome = await runCliLogin(env, (url) => {
-        if (!this.cliLoginState.loginUrl) {
-          this.cliLoginState = {
-            ...this.cliLoginState,
-            loginUrl: url,
-            message: 'Откройте ссылку и войдите в Cursor.',
-          };
-        }
+        const prev = this.cliLoginState.loginUrl;
+        if (prev && prev.length >= url.length) return;
+        this.cliLoginState = {
+          ...this.cliLoginState,
+          loginUrl: url,
+          message: 'Откройте ссылку и войдите в Cursor.',
+        };
       });
+      if (!this.cliLoginState.loginUrl && outcome.loginUrl) {
+        this.cliLoginState = {
+          ...this.cliLoginState,
+          loginUrl: outcome.loginUrl,
+          message: 'Откройте ссылку и войдите в Cursor.',
+        };
+      }
+      if (!this.cliLoginState.loginUrl) {
+        this.cliLoginState = {
+          status: 'failed',
+          loginUrl: null,
+          message: outcome.message ?? CLI_LOGIN_NO_URL_MESSAGE,
+        };
+        return;
+      }
       if (outcome.ok) {
         await this.ensureCliAuthChecked(env, 0);
         this.cliLoginState = {

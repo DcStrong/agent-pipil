@@ -1,4 +1,5 @@
 import {
+  CLI_LOGIN_NO_URL_MESSAGE,
   extractLoginUrl,
   parseStatusText,
   queryCliAuthStatus,
@@ -37,6 +38,16 @@ describe('cursor-cli-auth', () => {
       signedIn: false,
       accountLabel: null,
     });
+  });
+
+  it('extractLoginUrl возвращает длинный url с query без изменений', () => {
+    const url =
+      'https://cursor.com/loginDeepControl?challenge=' +
+      'AbCdEf0123456789%2B%2F%3D&state=' +
+      'x'.repeat(200) +
+      '&port=8765&mode=login';
+    const wrapped = `Sign in: ${url} (waiting)`;
+    expect(extractLoginUrl(wrapped)).toBe(url);
   });
 
   it('extractLoginUrl находит https-ссылку', () => {
@@ -78,8 +89,45 @@ describe('cursor-cli-auth', () => {
     const urls: string[] = [];
     const result = await runCliLogin(process.env, (url) => urls.push(url));
     expect(result.ok).toBe(true);
-    expect(urls[0]).toContain('https://cursor.com/cli-login');
+    expect(urls[urls.length - 1]).toBe('https://cursor.com/cli-login?x=1');
+    expect(result.loginUrl).toBe('https://cursor.com/cli-login?x=1');
     expect(seenEnv[0]?.NO_OPEN_BROWSER).toBe('1');
+  });
+
+  it('runCliLogin собирает url из нескольких chunk без обрезки', async () => {
+    const full =
+      'https://cursor.com/loginDeepControl?challenge=' +
+      'a'.repeat(120) +
+      '&state=' +
+      'b'.repeat(80) +
+      '&port=8765';
+    setCliAuthExecForTests(async (input) => {
+      if (input.args[0] === 'login') {
+        const half = Math.floor(full.length / 2);
+        input.onChunk?.('stdout', full.slice(0, half));
+        input.onChunk?.('stdout', full.slice(half) + '\n');
+        return { stdout: '', stderr: '', code: 0 };
+      }
+      return { stdout: '', stderr: '', code: 1 };
+    });
+    const urls: string[] = [];
+    const result = await runCliLogin(process.env, (url) => urls.push(url));
+    expect(result.ok).toBe(true);
+    expect(urls[urls.length - 1]).toBe(full);
+    expect(result.loginUrl).toBe(full);
+  });
+
+  it('runCliLogin без ссылки в выводе — русская ошибка', async () => {
+    setCliAuthExecForTests(async (input) => {
+      if (input.args[0] === 'login') {
+        return { stdout: 'waiting for browser', stderr: '', code: 0 };
+      }
+      return { stdout: '', stderr: '', code: 1 };
+    });
+    const result = await runCliLogin(process.env);
+    expect(result.ok).toBe(false);
+    expect(result.loginUrl).toBeNull();
+    expect(result.message).toBe(CLI_LOGIN_NO_URL_MESSAGE);
   });
 
   it('runCliLogout вызывает agent logout', async () => {
