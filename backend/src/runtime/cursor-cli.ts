@@ -2,7 +2,6 @@
  * Локальный Cursor Agent CLI (`agent -p --workspace …`).
  * В тестах подменяется через setCursorCliExecForTests.
  */
-import { spawn } from 'node:child_process';
 import { accessSync, constants, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
@@ -10,9 +9,13 @@ import {
   type CursorStepInput,
   type CursorStepResult,
 } from './cursor-client';
+import { spawnAgentProcess } from './cursor-cli-spawn';
 
-export const CURSOR_CLI_MISSING_KEY_MESSAGE =
-  'Нельзя выполнить шаг Cursor: не задан CURSOR_API_KEY. Выполните `agent login` на машине, где работает backend, или сохраните ключ в настройках.';
+export const CURSOR_CLI_MISSING_AUTH_MESSAGE =
+  'Нельзя выполнить шаг Cursor: нет входа в CLI и не задан CURSOR_API_KEY. Нажмите «Войти через Cursor» в настройках или сохраните ключ.';
+
+/** @deprecated используйте CURSOR_CLI_MISSING_AUTH_MESSAGE */
+export const CURSOR_CLI_MISSING_KEY_MESSAGE = CURSOR_CLI_MISSING_AUTH_MESSAGE;
 
 export type CliExecInput = {
   binary: string;
@@ -119,44 +122,24 @@ function assertWorkspaceExists(input: CursorStepInput): string {
   return workspace;
 }
 
-function resolveCliApiKey(
+function buildCliSpawnEnv(
   env: NodeJS.ProcessEnv,
   cliApiKey: string | null | undefined,
-): string {
+): NodeJS.ProcessEnv {
   const key = cliApiKey?.trim() || env.CURSOR_API_KEY?.trim();
-  if (!key || key.length < 8) {
-    throw new Error(CURSOR_CLI_MISSING_KEY_MESSAGE);
+  if (key && key.length >= 8) {
+    return { ...env, CURSOR_API_KEY: key };
   }
-  return key;
+  return { ...env };
 }
 
 const defaultExec: CliExecFn = (input) =>
-  new Promise((resolve, reject) => {
-    const child = spawn(input.binary, [...input.args, input.prompt], {
-      cwd: input.cwd,
-      env: input.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout?.on('data', (chunk: Buffer | string) => {
-      stdout += chunk.toString();
-    });
-    child.stderr?.on('data', (chunk: Buffer | string) => {
-      stderr += chunk.toString();
-    });
-    const timer = setTimeout(() => {
-      child.kill('SIGTERM');
-      reject(new Error('Превышено время ожидания ответа Cursor CLI.'));
-    }, input.timeoutMs);
-    child.on('error', (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({ stdout, stderr, code });
-    });
+  spawnAgentProcess({
+    binary: input.binary,
+    args: [...input.args, input.prompt],
+    cwd: input.cwd,
+    env: input.env,
+    timeoutMs: input.timeoutMs,
   });
 
 /** Одно задание в папке или workspace через официальный CLI Cursor. */
@@ -171,8 +154,7 @@ export async function runCursorCliStep(
       'Нельзя выполнить шаг Cursor: на сервере не найден CLI «agent». Установите Cursor CLI (curl https://cursor.com/install) и добавьте его в PATH на машине, где работает backend.',
     );
   }
-  const apiKey = resolveCliApiKey(env, cliApiKey);
-  const spawnEnv: NodeJS.ProcessEnv = { ...env, CURSOR_API_KEY: apiKey };
+  const spawnEnv = buildCliSpawnEnv(env, cliApiKey);
   const workspace = assertWorkspaceExists(input);
   const prompt = buildPrompt(input);
   const cwd =

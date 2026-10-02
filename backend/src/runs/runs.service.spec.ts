@@ -9,6 +9,7 @@ import { SettingsService } from '../settings/settings.service';
 import { StoreService } from '../store/store.service';
 import { DATA_PATH } from '../store/store.tokens';
 import { WorkflowsService } from '../workflows/workflows.service';
+import { setCliAuthExecForTests } from '../runtime/cursor-cli-auth';
 import { setCursorCliExecForTests } from '../runtime/cursor-cli';
 import { RunsService } from './runs.service';
 
@@ -76,6 +77,7 @@ describe('RunsService', () => {
   });
 
   afterEach(async () => {
+    setCliAuthExecForTests(null);
     if (moduleRef) {
       await moduleRef.get(StoreService).whenSaved();
       await moduleRef.close();
@@ -282,19 +284,23 @@ describe('RunsService', () => {
     const { settings } = await make();
     const secret = 'cursor_live_token_value';
     const saved = settings.save(secret);
-    expect(saved).toEqual({
-      connected: true,
-      source: 'saved',
-      hint: '••••alue',
-      mode: 'api',
-    });
+    expect(saved).toEqual(
+      expect.objectContaining({
+        connected: true,
+        source: 'saved',
+        hint: '••••alue',
+        mode: 'api',
+      }),
+    );
     expect(JSON.stringify(saved)).not.toContain(secret);
-    expect(settings.clear()).toEqual({
-      connected: false,
-      source: 'none',
-      hint: null,
-      mode: 'api',
-    });
+    expect(settings.clear()).toEqual(
+      expect.objectContaining({
+        connected: false,
+        source: 'none',
+        hint: null,
+        mode: 'api',
+      }),
+    );
   });
 
   it('сохраняет ключ CLI и не возвращает его целиком', async () => {
@@ -302,19 +308,62 @@ describe('RunsService', () => {
     settings.setMode('cli');
     const secret = 'cursor_cli_key_value';
     const saved = settings.saveCliApiKey(secret);
-    expect(saved).toEqual({
-      connected: false,
-      source: 'saved',
-      hint: '••••alue',
-      mode: 'cli',
-    });
+    expect(saved).toEqual(
+      expect.objectContaining({
+        connected: false,
+        source: 'saved',
+        hint: '••••alue',
+        mode: 'cli',
+      }),
+    );
     expect(JSON.stringify(saved)).not.toContain(secret);
-    expect(settings.clear()).toEqual({
-      connected: false,
-      source: 'none',
-      hint: null,
-      mode: 'cli',
+    expect(settings.clear()).toEqual(
+      expect.objectContaining({
+        connected: false,
+        source: 'none',
+        hint: null,
+        mode: 'cli',
+      }),
+    );
+  });
+
+  it('в режиме CLI с сессией без сохранённого ключа выполняет шаг', async () => {
+    setCliAuthExecForTests(async (input) => {
+      if (input.args[0] === 'status') {
+        return {
+          stdout: JSON.stringify({ authenticated: true, email: 'dev@example.com' }),
+          stderr: '',
+          code: 0,
+        };
+      }
+      return { stdout: '', stderr: '', code: 1 };
     });
+    setCursorCliExecForTests(async () => ({
+      stdout: 'Ответ локального CLI по сессии.',
+      stderr: '',
+      code: 0,
+    }));
+    const previousBin = process.env.CURSOR_AGENT_BIN;
+    try {
+      const { runs, projectId, settings } = await make({ token: false });
+      const fakeAgent = join(directory, 'fake-agent');
+      await writeFile(fakeAgent, '#!/bin/sh\n');
+      await chmod(fakeAgent, 0o755);
+      process.env.CURSOR_AGENT_BIN = fakeAgent;
+      settings.setMode('cli');
+      const started = runs.start('workflow_supervised', 'Проверка CLI сессии', {
+        roleIds: ['agent_builder'],
+        projectId,
+      });
+      const done = await until(runs, started.id, 'completed');
+      expect(done.status).toBe('completed');
+      expect(done.work.some((item) => item.output.includes('сессии'))).toBe(true);
+    } finally {
+      setCliAuthExecForTests(null);
+      setCursorCliExecForTests(null);
+      if (previousBin === undefined) delete process.env.CURSOR_AGENT_BIN;
+      else process.env.CURSOR_AGENT_BIN = previousBin;
+    }
   });
 
   it('в режиме CLI вызывает подменённый agent без сети', async () => {

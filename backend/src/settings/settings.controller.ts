@@ -5,6 +5,7 @@ import {
   Delete,
   Get,
   Patch,
+  Post,
   Put,
 } from '@nestjs/common';
 import type { CursorConnectionMode } from '../domain';
@@ -15,8 +16,8 @@ export class SettingsController {
   constructor(private readonly settings: SettingsService) {}
 
   @Get()
-  get(): CursorConnection {
-    return this.settings.connection();
+  async get(): Promise<CursorConnection> {
+    return this.settings.connectionView();
   }
 
   @Put()
@@ -38,6 +39,16 @@ export class SettingsController {
   @Delete()
   clear(): CursorConnection {
     return this.settings.clear();
+  }
+
+  @Post('cli/login')
+  async startCliLogin(): Promise<CursorConnection> {
+    return this.settings.startCliLogin();
+  }
+
+  @Post('cli/logout')
+  async logoutCliSession(): Promise<CursorConnection> {
+    return this.settings.logoutCliSession();
   }
 
   @Patch('mode')

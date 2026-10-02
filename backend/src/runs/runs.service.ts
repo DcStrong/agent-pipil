@@ -152,7 +152,13 @@ export class RunsService {
           live,
           cursorMode,
           cursorToken: this.settings.apiToken(),
-          cursorCliApiKey: this.settings.cliApiKey(),
+          resolveCliAuth: async () => {
+            await this.settings.ensureCliAuthChecked(process.env, 0);
+            return {
+              ready: this.settings.cliAuthReady(),
+              apiKey: this.settings.cliApiKey(),
+            };
+          },
           projectFolder: snapshot.folder,
           workspaceFile: snapshot.workspaceFile,
         },

@@ -1,5 +1,5 @@
 /** Токен и ключ Cursor остаются на сервере. В браузер возвращается только маска. */
-import { useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { api, messageOf } from '../api'
 import { useLive } from '../live'
 import type { CursorConnectionMode } from '../types'
@@ -9,7 +9,25 @@ export function SettingsPage() {
   const [secret, setSecret] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
+  const openedLoginUrl = useRef<string | null>(null)
   const mode: CursorConnectionMode = cursor?.mode ?? 'cli'
+  const loginPending = mode === 'cli' && cursor?.cliLogin.status === 'pending'
+
+  useEffect(() => {
+    if (mode !== 'cli') return
+    const url = cursor?.cliLogin.loginUrl
+    if (!url || openedLoginUrl.current === url) return
+    openedLoginUrl.current = url
+    window.open(url, '_blank', 'noopener,noreferrer')
+  }, [cursor?.cliLogin.loginUrl, mode])
+
+  useEffect(() => {
+    if (!loginPending) return
+    const timer = window.setInterval(() => {
+      void reload().catch(() => undefined)
+    }, 2000)
+    return () => window.clearInterval(timer)
+  }, [loginPending, reload])
 
   async function save(event: FormEvent) {
     event.preventDefault()
@@ -26,13 +44,43 @@ export function SettingsPage() {
     }
   }
 
-  async function clear() {
+  async function clearKey() {
     setError(null)
     setNote(null)
     try {
       await api.clearCursor()
       await reload()
       setNote(mode === 'cli' ? 'Сохранённый ключ удалён.' : 'Сохранённый токен удалён.')
+    } catch (reason) {
+      setError(messageOf(reason))
+    }
+  }
+
+  async function startCliLogin() {
+    setError(null)
+    setNote(null)
+    openedLoginUrl.current = null
+    try {
+      const next = await api.startCursorCliLogin()
+      await reload()
+      if (next.cliLogin.loginUrl) {
+        setNote('Откройте ссылку и войдите в Cursor. Ожидаем подтверждение на сервере…')
+      } else {
+        setNote(next.cliLogin.message ?? 'Запущен вход через CLI…')
+      }
+    } catch (reason) {
+      setError(messageOf(reason))
+    }
+  }
+
+  async function logoutCliSession() {
+    setError(null)
+    setNote(null)
+    try {
+      await api.logoutCursorCliSession()
+      openedLoginUrl.current = null
+      await reload()
+      setNote('Сессия CLI на сервере завершена.')
     } catch (reason) {
       setError(messageOf(reason))
     }
@@ -58,25 +106,35 @@ export function SettingsPage() {
         ? mode === 'cli'
           ? 'задан в CURSOR_API_KEY'
           : 'задан в CURSOR_API_TOKEN'
-        : 'не задан'
+        : cursor?.source === 'session'
+          ? 'вход через CLI на сервере'
+          : 'не задан'
 
   const modeHint =
     mode === 'cli'
-      ? 'CLI запускает локальный agent в папке выбранного проекта на машине, где работает backend. Ключ CURSOR_API_KEY передаётся только в процесс agent на сервере.'
+      ? 'CLI запускает локальный agent в папке проекта на машине backend. Можно войти через Cursor (как `agent login`) или сохранить ключ CURSOR_API_KEY для CI и скриптов.'
       : 'API вызывает POST https://api.cursor.com/v1/agents; токен хранится только на сервере.'
 
   const readyLabel =
     mode === 'cli'
       ? cursor?.connected
-        ? 'CLI готов (agent и ключ)'
-        : 'CLI не готов (нужны agent в PATH и ключ CURSOR_API_KEY)'
+        ? 'CLI готов'
+        : cursor?.cliAgentAvailable
+          ? 'CLI не готов (нужен вход или ключ)'
+          : 'CLI «agent» не найден на сервере'
       : cursor?.connected
         ? 'подключён'
         : 'не подключён'
 
   const secretLabel = mode === 'cli' ? 'CURSOR_API_KEY' : 'API-токен'
-  const secretPlaceholder =
-    mode === 'cli' ? 'Вставьте ключ для CLI' : 'Вставьте токен'
+  const secretPlaceholder = mode === 'cli' ? 'Ключ для CI или без интерактивного входа' : 'Вставьте токен'
+
+  const loginMessage =
+    cursor?.cliLogin.status === 'pending'
+      ? cursor.cliLogin.message
+      : cursor?.cliLogin.status === 'failed'
+        ? cursor.cliLogin.message
+        : null
 
   return (
     <div className="page narrow">
@@ -113,8 +171,43 @@ export function SettingsPage() {
         <p className="hint">{modeHint}</p>
         <p data-testid="token-hint">
           Сейчас: {readyLabel} · режим {mode === 'cli' ? 'CLI' : 'API'}
+          {mode === 'cli' && cursor?.cliSessionSignedIn && cursor.cliAccountLabel
+            ? ` · вошли как ${cursor.cliAccountLabel}`
+            : null}
           {` · ${mode === 'cli' ? 'ключ' : 'токен'} ${source}${cursor?.hint ? ` · ${cursor.hint}` : ''}`}
         </p>
+        {mode === 'cli' ? (
+          <div className="field" data-testid="cli-login-block">
+            <div className="row-actions">
+              <button
+                type="button"
+                className="primary"
+                data-testid="cli-login-start"
+                disabled={loginPending || !cursor?.cliAgentAvailable}
+                onClick={() => void startCliLogin()}
+              >
+                {loginPending ? 'Ожидание входа…' : 'Войти через Cursor'}
+              </button>
+              <button
+                type="button"
+                data-testid="cli-logout"
+                disabled={!cursor?.cliSessionSignedIn && cursor?.cliLogin.status !== 'success'}
+                onClick={() => void logoutCliSession()}
+              >
+                Выйти из CLI
+              </button>
+            </div>
+            {loginPending && cursor?.cliLogin.loginUrl ? (
+              <p className="hint">
+                Ссылка для входа:{' '}
+                <a href={cursor.cliLogin.loginUrl} target="_blank" rel="noreferrer">
+                  открыть страницу Cursor
+                </a>
+              </p>
+            ) : null}
+            {loginMessage ? <p className={cursor?.cliLogin.status === 'failed' ? 'error-line' : 'hint'}>{loginMessage}</p> : null}
+          </div>
+        ) : null}
         <form onSubmit={(event) => void save(event)}>
           <label className="field">
             <span>{secretLabel}</span>
@@ -133,8 +226,8 @@ export function SettingsPage() {
             <button type="submit" className="primary" data-testid="save-token">
               Сохранить на сервере
             </button>
-            <button type="button" onClick={() => void clear()}>
-              Удалить сохранённый
+            <button type="button" onClick={() => void clearKey()}>
+              {mode === 'cli' ? 'Удалить сохранённый ключ' : 'Удалить сохранённый токен'}
             </button>
           </div>
         </form>

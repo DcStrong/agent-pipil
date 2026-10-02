@@ -2,7 +2,6 @@ import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  CURSOR_CLI_MISSING_KEY_MESSAGE,
   resolveAgentBinary,
   runCursorCliStep,
   setCursorCliExecForTests,
@@ -10,7 +9,6 @@ import {
 
 describe('runCursorCliStep', () => {
   const previousBin = process.env.CURSOR_AGENT_BIN;
-  const previousKey = process.env.CURSOR_API_KEY;
   let directory = '';
 
   beforeEach(async () => {
@@ -26,8 +24,6 @@ describe('runCursorCliStep', () => {
     if (directory) await rm(directory, { recursive: true, force: true });
     if (previousBin === undefined) delete process.env.CURSOR_AGENT_BIN;
     else process.env.CURSOR_AGENT_BIN = previousBin;
-    if (previousKey === undefined) delete process.env.CURSOR_API_KEY;
-    else process.env.CURSOR_API_KEY = previousKey;
   });
 
   it('вызывает agent -p --workspace с подменённым exec и CURSOR_API_KEY', async () => {
@@ -67,6 +63,29 @@ describe('runCursorCliStep', () => {
     expect(calls[0]?.env.CURSOR_API_KEY).toBe('cursor_cli_secret_key');
   });
 
+  it('без ключа использует сессию CLI и не подставляет CURSOR_API_KEY', async () => {
+    const calls: Array<{ env: NodeJS.ProcessEnv }> = [];
+    setCursorCliExecForTests(async (input) => {
+      calls.push({ env: input.env });
+      return { stdout: 'Ответ по сессии.', stderr: '', code: 0 };
+    });
+    await runCursorCliStep(
+      {
+        token: '',
+        task: 'x',
+        stepTitle: 'y',
+        agentName: 'z',
+        instructions: '',
+        skills: [],
+        projectFolder: directory,
+        workspaceFile: null,
+      },
+      process.env,
+      null,
+    );
+    expect(calls[0]?.env.CURSOR_API_KEY).toBeUndefined();
+  });
+
   it('без CLI объясняет причину по-русски', async () => {
     delete process.env.CURSOR_AGENT_BIN;
     await expect(
@@ -85,25 +104,6 @@ describe('runCursorCliStep', () => {
         'cursor_cli_secret_key',
       ),
     ).rejects.toThrow('agent');
-  });
-
-  it('без ключа объясняет причину по-русски', async () => {
-    await expect(
-      runCursorCliStep(
-        {
-          token: '',
-          task: 'x',
-          stepTitle: 'y',
-          agentName: 'z',
-          instructions: '',
-          skills: [],
-          projectFolder: directory,
-          workspaceFile: null,
-        },
-        process.env,
-        null,
-      ),
-    ).rejects.toThrow(CURSOR_CLI_MISSING_KEY_MESSAGE);
   });
 
   it('resolveAgentBinary находит бинарник из CURSOR_AGENT_BIN', () => {
