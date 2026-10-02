@@ -13,4 +13,8 @@ describe('карточка задачи на доске', () => {
   it('отделяет кнопки действий от текста', () => {
     expect(styles).toMatch(/\.task-card \.row-actions\s*\{[\s\S]*border-top:/)
   })
+
+  it('подсвечивает карточку с запуском как кликабельную', () => {
+    expect(styles).toMatch(/\.task-card\.open-run\s*\{[\s\S]*cursor:\s*pointer/)
+  })
 })
