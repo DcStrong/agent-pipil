@@ -741,6 +741,12 @@ button:not(.primary):not(.icon-btn):not(.text-btn):not(.node):not(.menu-item):no
 .filter { width: 240px; flex: none; }
 .filter .dark-select-btn { padding-right: 14px; }
 .run-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.run-list-item { display: flex; align-items: center; gap: 8px; }
+.run-list-item .run-row { flex: 1; min-width: 0; }
+.run-delete { flex: none; }
+.text-btn.danger { color: var(--red); }
+.text-btn.danger:hover { color: #ffb4b4; }
+.log-head-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .run-row {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr) auto;
@@ -1217,6 +1223,7 @@ code { font-family: ui-monospace, monospace; font-size: 0.92em; }
   margin: 12px 0 20px;
 }
 .task-page-head h1 { margin: 6px 0 8px; font-size: 26px; }
+.task-page-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .task-body-block,
 .agent-summaries,
 .review-actions,

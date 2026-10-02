@@ -150,6 +150,7 @@ export const api = {
       body: JSON.stringify({ decision }),
     }),
   stop: (id: string) => request<Run>(`/api/runs/${id}/stop`, { method: 'POST' }),
+  deleteRun: (id: string) => request<{ ok: true }>(`/api/runs/${id}`, { method: 'DELETE' }),
   cursor: () => request<CursorConnection>('/api/settings/cursor'),
   startCursorCliLogin: () =>
     request<CursorConnection>('/api/settings/cursor/cli/login', { method: 'POST' }),
@@ -197,6 +198,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ text }),
     }),
+  deleteTask: (id: string) => request<{ ok: true }>(`/api/board/${id}`, { method: 'DELETE' }),
   /** Списки .cursor. Пустая папка возвращает предложение, не создавая файлов. */
   cursorProject: (folder: string) =>
     request<CursorProjectView>(`/api/project/cursor?folder=${encodeURIComponent(folder)}`),

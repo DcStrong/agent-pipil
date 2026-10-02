@@ -5,7 +5,7 @@
  * Кто стоит на шаге, по-прежнему решает холст.
  * Сборка получает план. Живой Cursor отсюда не вызывается.
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import type { ProjectSnapshot, StepMode, TaskPlan } from '../domain';
 
@@ -146,6 +146,20 @@ export function taskDirectory(
   const dir = join(project.folder, '.pipil', 'tasks', runId);
   if (!inside(project.folder, dir)) return null;
   return dir;
+}
+
+/** Убирает папку запуска в проекте, если она была создана. */
+export function removeTaskDirectory(
+  project: ProjectSnapshot | null,
+  runId: string,
+): void {
+  const dir = taskDirectory(project, runId);
+  if (!dir) return;
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // Папку уже могли убрать вручную.
+  }
 }
 
 export function writeTaskPieces(

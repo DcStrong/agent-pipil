@@ -1,5 +1,6 @@
 /** Список всех запусков: статус, число шагов и время. */
 import { useMemo, useState } from 'react'
+import { api, messageOf } from '../api'
 import { DarkSelect } from '../components/DarkSelect'
 import { IconCheck, IconSpark } from '../components/Icons'
 import { progress, taskTitle, when } from '../format'
@@ -17,12 +18,24 @@ const filters: Array<{ id: 'all' | RunStatus; label: string }> = [
 ]
 
 export function RunsPage() {
-  const { runs } = useLive()
+  const { runs, removeRun } = useLive()
   const [filter, setFilter] = useState<(typeof filters)[number]['id']>('all')
+  const [error, setError] = useState<string | null>(null)
   const visible = useMemo(
     () => (filter === 'all' ? runs : runs.filter((run) => run.status === filter)),
     [runs, filter],
   )
+
+  async function dropRun(id: string) {
+    if (!window.confirm('Удалить этот запуск? Задача на доске останется.')) return
+    setError(null)
+    try {
+      await api.deleteRun(id)
+      removeRun(id)
+    } catch (reason) {
+      setError(messageOf(reason))
+    }
+  }
 
   return (
     <div className="page narrow">
@@ -40,10 +53,11 @@ export function RunsPage() {
           />
         </div>
       </header>
+      {error ? <p className="banner">{error}</p> : null}
       {visible.length === 0 ? <p className="empty">Таких запусков нет.</p> : null}
       <ul className="run-list">
         {visible.map((run) => (
-          <li key={run.id}>
+          <li key={run.id} className="run-list-item">
             <a className="run-row" href={href({ name: 'run', runId: run.id })}>
               <StatusGlyph status={run.status} />
               <span className="run-copy">
@@ -54,6 +68,14 @@ export function RunsPage() {
               </span>
               <time>{when(run.updatedAt)}</time>
             </a>
+            <button
+              type="button"
+              className="text-btn danger run-delete"
+              data-testid={`delete-run-${run.id}`}
+              onClick={() => void dropRun(run.id)}
+            >
+              Удалить
+            </button>
           </li>
         ))}
       </ul>

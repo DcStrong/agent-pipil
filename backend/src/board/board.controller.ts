@@ -3,6 +3,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Post,
@@ -161,5 +162,11 @@ export class BoardController {
       throw new BadRequestException('Нужен текст ответа.');
     }
     return this.board.answerFromReview(id, record.text);
+  }
+
+  @Delete(':id')
+  remove(@Param('id') id: string): { ok: true } {
+    this.board.remove(id);
+    return { ok: true };
   }
 }

@@ -7,7 +7,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { Observable, Subject } from 'rxjs';
 import type { AgentKind, Run, RunStep, StepMode, TaskPlan } from '../domain';
-import { checklistItems } from '../runtime/task-order';
+import { checklistItems, removeTaskDirectory } from '../runtime/task-order';
 import { roleOrder } from '../domain';
 import { orderSteps } from '../runtime/step-graph';
 import { CursorClient } from '../runtime/cursor-client';
@@ -24,6 +24,8 @@ export class RunsService {
   private readonly updates = new Subject<StreamMessage>();
   private readonly orchestrator = new Orchestrator();
   private readonly cursor = new CursorClient();
+  /** Запуски, которые убрали из хранилища: оркестратор их больше не публикует. */
+  private readonly suppressed = new Set<string>();
 
   constructor(
     private readonly store: StoreService,
@@ -39,6 +41,33 @@ export class RunsService {
     const run = this.store.getRun(id);
     if (!run) throw new NotFoundException('Запуск не найден.');
     return run;
+  }
+
+  /** Удаляет один запуск. Задача на доске остаётся, ссылка runId сбрасывается. */
+  remove(id: string): void {
+    const run = this.get(id);
+    this.suppressed.add(id);
+    if (this.isOpenStatus(run.status)) {
+      this.orchestrator.requestHalt(id, 'Запуск удалён.');
+    }
+    removeTaskDirectory(run.project, run.id);
+    this.store.mutate((state) => {
+      state.runs = state.runs.filter((item) => item.id !== id);
+      for (const task of state.tasks) {
+        if (task.runId === id) task.runId = null;
+      }
+    });
+    this.notifyStream();
+  }
+
+  /** Все запуски, привязанные к задаче доски. */
+  runIdsForBoardTask(taskId: string, linkedRunId: string | null): string[] {
+    const ids = new Set<string>();
+    if (linkedRunId) ids.add(linkedRunId);
+    for (const run of this.store.read().runs) {
+      if (run.boardTaskId === taskId) ids.add(run.id);
+    }
+    return [...ids];
   }
 
   watch(): Observable<StreamMessage> {
@@ -63,6 +92,7 @@ export class RunsService {
       projectId?: string | null;
       mapPath?: string | null;
       deepThinking?: boolean;
+      boardTaskId?: string | null;
     },
   ): Run {
     const trimmed = task.trim();
@@ -132,7 +162,9 @@ export class RunsService {
       reviewText: null,
       taskFolder: null,
       archive: null,
+      boardTaskId: options?.boardTaskId?.trim() || null,
     };
+    this.suppressed.delete(run.id);
     this.store.upsertRun(run);
     const cursorMode = this.settings.connectionMode();
     const cursorConnected = this.settings.cursorReady();
@@ -142,10 +174,7 @@ export class RunsService {
     void this.orchestrator
       .execute(
         run,
-        (published) => {
-          this.store.upsertRun(published);
-          this.updates.next({ type: 'run', run: published });
-        },
+        (published) => this.publishRun(published),
         {
           delayMs: readDelayMs(),
           cursorConnected,
@@ -268,9 +297,20 @@ export class RunsService {
   }
 
   private publishLive(run: Run): void {
-    const snapshot = structuredClone(run);
-    this.store.upsertRun(snapshot);
-    this.updates.next({ type: 'run', run: snapshot });
+    this.publishRun(structuredClone(run));
+  }
+
+  private publishRun(run: Run): void {
+    if (this.suppressed.has(run.id)) return;
+    this.store.upsertRun(run);
+    this.updates.next({ type: 'run', run: structuredClone(run) });
+  }
+
+  private notifyStream(): void {
+    const current = this.store.relevantRun();
+    this.updates.next(
+      current ? { type: 'run', run: current } : { type: 'idle' },
+    );
   }
 
   private isOpenStatus(status: Run['status']): boolean {

@@ -17,7 +17,7 @@ import { href } from '../route'
 import type { TaskPlan } from '../types'
 
 export function RunPage({ runId }: { runId: string }) {
-  const { ready, runs, upsertRun } = useLive()
+  const { ready, runs, upsertRun, removeRun } = useLive()
   const run = runs.find((item) => item.id === runId)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -64,6 +64,22 @@ export function RunPage({ runId }: { runId: string }) {
     }
   }
 
+  async function dropRun() {
+    if (!run) return
+    if (!window.confirm('Удалить этот запуск? Задача на доске останется.')) return
+    setBusy(true)
+    setError(null)
+    try {
+      await api.deleteRun(run.id)
+      removeRun(run.id)
+      window.location.hash = href({ name: 'runs' })
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   if (!ready) {
     return (
       <div className="page">
@@ -95,8 +111,21 @@ export function RunPage({ runId }: { runId: string }) {
           <span>{taskTitle(run.task)}</span>
         </p>
         <header className="log-head">
-          <h1>{run.workflowName}</h1>
-          <p>{taskTitle(run.task)}</p>
+          <div className="log-head-row">
+            <div>
+              <h1>{run.workflowName}</h1>
+              <p>{taskTitle(run.task)}</p>
+            </div>
+            <button
+              type="button"
+              className="text-btn danger"
+              data-testid="delete-run"
+              disabled={busy}
+              onClick={() => void dropRun()}
+            >
+              Удалить запуск
+            </button>
+          </div>
         </header>
         <section className="run-task" data-testid="run-task">
           <h2 className="run-task-label">Задача пользователя</h2>

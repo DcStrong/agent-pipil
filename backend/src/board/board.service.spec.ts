@@ -294,6 +294,31 @@ describe('BoardService', () => {
     const run = store.read().runs.find((item) => item.id === updated.runId);
     expect(run?.project?.folder).toBe(project?.path);
     expect(run?.task).toContain('Старт');
+    expect(run?.boardTaskId).toBe(task.id);
+  });
+
+  it('удаление задачи убирает её запуски и не трогает другие задачи', async () => {
+    const { board, projectId, store } = await make();
+    const keep = board.create('Оставить', 'Описание', {
+      projectId,
+      team: [{ agentId: 'role_analyst', mode: 'ask' }],
+    });
+    const drop = board.create('Убрать', 'Описание', {
+      projectId,
+      team: [{ agentId: 'role_analyst', mode: 'ask' }],
+    });
+    board.move(drop.id, 'in_progress');
+    const dropRunId = board.get(drop.id).runId;
+    expect(dropRunId).toBeTruthy();
+    board.remove(drop.id);
+    expect(() => board.get(drop.id)).toThrow(/не найдена/i);
+    expect(store.read().tasks.some((item) => item.id === keep.id)).toBe(true);
+    expect(store.read().runs.some((item) => item.id === dropRunId)).toBe(false);
+    expect(
+      store.read().runs.every(
+        (item) => item.boardTaskId !== drop.id && item.id !== dropRunId,
+      ),
+    ).toBe(true);
   });
 
   it('не переводит в работу задачу без projectId', async () => {

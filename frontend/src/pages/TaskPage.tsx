@@ -47,7 +47,7 @@ function stepsForTask(task: BoardTask, run: Run | undefined): StepView[] {
 }
 
 export function TaskPage({ taskId }: { taskId: string }) {
-  const { ready, tasks, runs, upsertTask, upsertRun } = useLive()
+  const { ready, tasks, runs, upsertTask, upsertRun, removeTask, removeRun } = useLive()
   const task = tasks.find((item) => item.id === taskId)
   const run = task?.runId ? runs.find((item) => item.id === task.runId) : undefined
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -77,6 +77,32 @@ export function TaskPage({ taskId }: { taskId: string }) {
   const onReview = task.status === 'review'
   const done = task.status === 'completed'
   const waitingQuestion = run?.status === 'waiting_user'
+
+  async function dropTask() {
+    if (
+      !window.confirm(
+        `Удалить задачу «${task.title}» и все её запуски? Это нельзя отменить.`,
+      )
+    ) {
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      await api.deleteTask(taskId)
+      removeTask(taskId)
+      for (const item of runs) {
+        if (item.id === task.runId || item.boardTaskId === taskId) {
+          removeRun(item.id)
+        }
+      }
+      window.location.hash = href({ name: 'board' })
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function complete() {
     setBusy(true)
@@ -131,11 +157,22 @@ export function TaskPage({ taskId }: { taskId: string }) {
             {taskStatusLabel(task.status)}
           </span>
         </div>
-        {task.runId ? (
-          <a className="text-btn" data-testid="open-full-run" href={href({ name: 'run', runId: task.runId })}>
-            Полный диалог запуска
-          </a>
-        ) : null}
+        <div className="task-page-actions">
+          {task.runId ? (
+            <a className="text-btn" data-testid="open-full-run" href={href({ name: 'run', runId: task.runId })}>
+              Полный диалог запуска
+            </a>
+          ) : null}
+          <button
+            type="button"
+            className="text-btn danger"
+            data-testid="delete-task"
+            disabled={busy}
+            onClick={() => void dropTask()}
+          >
+            Удалить
+          </button>
+        </div>
       </header>
 
       {task.description ? (
