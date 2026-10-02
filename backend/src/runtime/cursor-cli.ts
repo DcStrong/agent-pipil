@@ -160,7 +160,7 @@ export async function runCursorCliStep(
   const cwd =
     input.projectFolder?.trim() ||
     (input.workspaceFile?.trim() ? dirname(input.workspaceFile.trim()) : process.cwd());
-  const args = ['-p', '--trust', '--workspace', workspace];
+  const args = ['-p', '--workspace', workspace];
   const execFn = execForTests ?? defaultExec;
   const result = await execFn({
     binary,
