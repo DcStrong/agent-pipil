@@ -279,14 +279,17 @@ export class SettingsService implements OnModuleInit {
     };
   }
 
-  private markCliLoginSuccessIfSignedIn(): void {
-    if (this.cliLoginState.status !== 'pending') return;
-    if (!this.cliSessionSignedIn()) return;
+  /** @returns true, если вход уже success или только что стал success. */
+  private markCliLoginSuccessIfSignedIn(): boolean {
+    if (this.cliLoginState.status === 'success') return true;
+    if (this.cliLoginState.status !== 'pending') return false;
+    if (!this.cliSessionSignedIn()) return false;
     this.cliLoginState = {
       status: 'success',
       loginUrl: this.cliLoginState.loginUrl,
       message: 'Вход выполнен.',
     };
+    return true;
   }
 
   private async pollCliSessionDuringLogin(env: NodeJS.ProcessEnv): Promise<void> {
@@ -302,7 +305,7 @@ export class SettingsService implements OnModuleInit {
         (url) => this.noteLoginUrl(url),
         () => this.pollCliSessionDuringLogin(env),
       );
-      if (this.cliLoginState.status === 'success') {
+      if (this.markCliLoginSuccessIfSignedIn()) {
         return;
       }
       if (!this.cliLoginState.loginUrl && outcome.loginUrl) {
@@ -317,8 +320,7 @@ export class SettingsService implements OnModuleInit {
         return;
       }
       await this.ensureCliAuthChecked(env, 0);
-      this.markCliLoginSuccessIfSignedIn();
-      if (this.cliLoginState.status === 'success') {
+      if (this.markCliLoginSuccessIfSignedIn()) {
         return;
       }
       if (outcome.ok) {
@@ -332,6 +334,7 @@ export class SettingsService implements OnModuleInit {
       this.cliLoginState = {
         status: 'failed',
         loginUrl: this.cliLoginState.loginUrl,
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         message: outcome.message ?? CLI_LOGIN_FAILED_MESSAGE,
       };
     } catch (error) {
