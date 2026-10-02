@@ -25,7 +25,7 @@ describe('runCursorCliStep', () => {
     else process.env.CURSOR_AGENT_BIN = previousBin;
   });
 
-  it('вызывает agent -p --trust --workspace с подменённым exec', async () => {
+  it('вызывает agent -p --workspace с подменённым exec', async () => {
     const calls: Array<{ binary: string; args: string[]; prompt: string }> = [];
     setCursorCliExecForTests(async (input) => {
       calls.push({
@@ -47,7 +47,7 @@ describe('runCursorCliStep', () => {
     });
     expect(result.text).toContain('CLI');
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.args).toEqual(['-p', '--trust', '--workspace', directory]);
+    expect(calls[0]?.args).toEqual(['-p', '--workspace', directory]);
     expect(calls[0]?.prompt).toContain('README');
   });
 
