@@ -1,5 +1,5 @@
 /** Токен и ключ Cursor остаются на сервере. В браузер возвращается только маска. */
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { api, messageOf } from '../api'
 import { useLive } from '../live'
 import type { CursorConnectionMode } from '../types'
@@ -9,17 +9,8 @@ export function SettingsPage() {
   const [secret, setSecret] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
-  const openedLoginUrl = useRef<string | null>(null)
   const mode: CursorConnectionMode = cursor?.mode ?? 'cli'
   const loginPending = mode === 'cli' && cursor?.cliLogin.status === 'pending'
-
-  useEffect(() => {
-    if (mode !== 'cli') return
-    const url = cursor?.cliLogin.loginUrl
-    if (!url || openedLoginUrl.current === url) return
-    openedLoginUrl.current = url
-    window.open(url, '_blank', 'noopener,noreferrer')
-  }, [cursor?.cliLogin.loginUrl, mode])
 
   useEffect(() => {
     if (!loginPending) return
@@ -59,12 +50,13 @@ export function SettingsPage() {
   async function startCliLogin() {
     setError(null)
     setNote(null)
-    openedLoginUrl.current = null
     try {
       const next = await api.startCursorCliLogin()
       await reload()
       if (next.cliLogin.loginUrl) {
-        setNote('Откройте ссылку и войдите в Cursor. Ожидаем подтверждение на сервере…')
+        setNote(
+          'Откройте ссылку ниже в этом браузере на той же машине, где работает backend. Не используйте старую вкладку.',
+        )
       } else {
         setNote(next.cliLogin.message ?? 'Запущен вход через CLI…')
       }
@@ -78,7 +70,6 @@ export function SettingsPage() {
     setNote(null)
     try {
       await api.logoutCursorCliSession()
-      openedLoginUrl.current = null
       await reload()
       setNote('Сессия CLI на сервере завершена.')
     } catch (reason) {
@@ -112,7 +103,7 @@ export function SettingsPage() {
 
   const modeHint =
     mode === 'cli'
-      ? 'CLI запускает локальный agent в папке проекта на машине backend. Можно войти через Cursor (как `agent login`) или сохранить ключ CURSOR_API_KEY для CI и скриптов.'
+      ? 'CLI запускает локальный agent в папке проекта на машине backend. «Войти через Cursor» запускает `agent login` на сервере; ссылку нужно открыть на той же машине, пока процесс ждёт.'
       : 'API вызывает POST https://api.cursor.com/v1/agents; токен хранится только на сервере.'
 
   const readyLabel =
@@ -135,6 +126,8 @@ export function SettingsPage() {
       : cursor?.cliLogin.status === 'failed'
         ? cursor.cliLogin.message
         : null
+
+  const loginUrl = cursor?.cliLogin.loginUrl ?? null
 
   return (
     <div className="page narrow">
@@ -197,13 +190,19 @@ export function SettingsPage() {
                 Выйти из CLI
               </button>
             </div>
-            {loginPending && cursor?.cliLogin.loginUrl ? (
+            {loginUrl ? (
               <p className="hint">
                 Ссылка для входа:{' '}
-                <a href={cursor.cliLogin.loginUrl} target="_blank" rel="noreferrer">
+                <a href={loginUrl} target="_blank" rel="noreferrer" data-testid="cli-login-link">
                   открыть страницу Cursor
                 </a>
               </p>
+            ) : null}
+            {loginUrl ? (
+              <label className="field">
+                <span>URL из CLI (без изменений)</span>
+                <input type="text" readOnly value={loginUrl} data-testid="cli-login-url" />
+              </label>
             ) : null}
             {loginMessage ? <p className={cursor?.cliLogin.status === 'failed' ? 'error-line' : 'hint'}>{loginMessage}</p> : null}
           </div>

@@ -1,6 +1,10 @@
 /**
  * Вход и статус локального CLI (`agent login`, `agent status`, `agent logout`).
  * В тестах подменяется через setCliAuthExecForTests.
+ *
+ * Формат ссылки (по документации Cursor и типичному выводу CLI):
+ * https://cursor.com/loginDeepControl?challenge=…&uuid=…&mode=login&redirectTarget=cli
+ * PKCE-пара challenge привязан к процессу `agent login`, который должен оставаться запущенным.
  */
 import { resolveAgentBinary } from './cursor-cli';
 import { spawnAgentProcess, type AgentSpawnFn } from './cursor-cli-spawn';
@@ -21,32 +25,76 @@ export type CliLoginSnapshot = {
 export const CLI_LOGIN_NO_URL_MESSAGE =
   'CLI не выдал ссылку для входа. Попробуйте «Войти через Cursor» ещё раз или сохраните ключ CURSOR_API_KEY.';
 
+export const CLI_LOGIN_FAILED_MESSAGE =
+  'Вход не завершён. Откройте свежую ссылку сразу после «Войти через Cursor» (не старую вкладку). Браузер и backend должны быть на одной машине, пока на сервере работает `agent login`.';
+
+/** Точное совпадение с loginDeepControl без перекодирования query. */
+export const LOGIN_DEEP_CONTROL_PATTERN =
+  /https:\/\/cursor\.com\/loginDeepControl\?[A-Za-z0-9_\-./%+&=]+/i;
+
+const LOGIN_DEEP_CONTROL_END = 'redirectTarget=cli';
+
+function extractDeepLoginUrl(normalized: string): string | null {
+  const lower = normalized.toLowerCase();
+  const start = lower.indexOf('https://cursor.com/logindeepcontrol?');
+  if (start < 0) return null;
+  const tail = normalized.slice(start);
+  const endRel = tail.toLowerCase().indexOf(LOGIN_DEEP_CONTROL_END.toLowerCase());
+  if (endRel >= 0) {
+    return tail.slice(0, endRel + LOGIN_DEEP_CONTROL_END.length);
+  }
+  const loose = tail.match(LOGIN_DEEP_CONTROL_PATTERN);
+  return loose?.[0] ?? null;
+}
+
 let authExecForTests: AgentSpawnFn | null = null;
 
 export function setCliAuthExecForTests(fn: AgentSpawnFn | null): void {
   authExecForTests = fn;
 }
 
-/** Символы, допустимые в https-URL до пробела или кавычек (RFC 3986, без усечения query). */
-const LOGIN_URL_PATTERN = /https:\/\/[^\s"'`<>\u0000-\u001f\]]+/gi;
+const GENERIC_HTTPS_PATTERN = /https:\/\/[^\s"'`<>\u0000-\u001f\]]+/gi;
 
 export function stripTerminalNoise(text: string): string {
   return text.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
+/** Склеивает переносы строк внутри длинной ссылки из терминала. */
+export function normalizeCliLoginOutput(text: string): string {
+  let cleaned = stripTerminalNoise(text).replace(/\r/g, '');
+  cleaned = cleaned.replace(/([=&A-Za-z0-9_\-/%+])\n(?=[A-Za-z0-9_\-/%+&=.])/g, '$1');
+  cleaned = cleaned.replace(/\n+/g, ' ');
+  return cleaned;
 }
 
 function trimLoginUrlSuffix(url: string): string {
   return url.replace(/[),.;\]]+$/u, '');
 }
 
-/** Из текста CLI — самая длинная https-ссылка, без перекодирования и обрезки query. */
+function scoreLoginUrl(url: string): number {
+  const lower = url.toLowerCase();
+  if (lower.includes('logindeepcontrol')) return 1_000_000 + url.length;
+  if (lower.includes('logindeep')) return 900_000 + url.length;
+  if (lower.includes('mode=login')) return 800_000 + url.length;
+  return url.length;
+}
+
+/** Из текста CLI — URL входа byte-в-byte из вывода (без encode/decode). */
 export function extractLoginUrl(text: string): string | null {
-  const cleaned = stripTerminalNoise(text);
-  const matches = cleaned.match(LOGIN_URL_PATTERN);
+  const normalized = normalizeCliLoginOutput(text);
+  const deep = extractDeepLoginUrl(normalized);
+  if (deep) return deep;
+  const matches = normalized.match(GENERIC_HTTPS_PATTERN);
   if (!matches?.length) return null;
   let best = trimLoginUrlSuffix(matches[0]!);
+  let bestScore = scoreLoginUrl(best);
   for (const raw of matches) {
     const candidate = trimLoginUrlSuffix(raw);
-    if (candidate.length > best.length) best = candidate;
+    const score = scoreLoginUrl(candidate);
+    if (score > bestScore) {
+      best = candidate;
+      bestScore = score;
+    }
   }
   return best.length > 0 ? best : null;
 }
@@ -136,7 +184,7 @@ function trackLoginUrl(
 ): string | null {
   const found = extractLoginUrl(buffer);
   if (!found) return bestUrl;
-  if (!bestUrl || found.length > bestUrl.length) {
+  if (!bestUrl || scoreLoginUrl(found) > scoreLoginUrl(bestUrl)) {
     onUrl?.(found);
     return found;
   }
@@ -167,6 +215,8 @@ export type CliLoginOutcome = {
   ok: boolean;
   message: string | null;
   loginUrl: string | null;
+  /** Полный буфер stdout/stderr login (только для тестов и диагностики извлечения). */
+  rawOutput: string;
 };
 
 export async function runCliLogin(
@@ -187,24 +237,32 @@ export async function runCliLogin(
   );
   const merged = `${streamBuffer}\n${result.stdout}\n${result.stderr}`;
   bestUrl = trackLoginUrl(merged, bestUrl, onUrl);
+  const rawOutput = merged;
   if (result.code === 0) {
     if (!bestUrl) {
-      return { ok: false, message: CLI_LOGIN_NO_URL_MESSAGE, loginUrl: null };
+      return {
+        ok: false,
+        message: CLI_LOGIN_NO_URL_MESSAGE,
+        loginUrl: null,
+        rawOutput,
+      };
     }
-    return { ok: true, message: null, loginUrl: bestUrl };
+    return { ok: true, message: null, loginUrl: bestUrl, rawOutput };
   }
   if (!bestUrl) {
     return {
       ok: false,
       message: CLI_LOGIN_NO_URL_MESSAGE,
       loginUrl: null,
+      rawOutput,
     };
   }
   const detail = `${result.stdout}\n${result.stderr}`.trim();
   return {
     ok: false,
-    message: detail || `Код выхода ${result.code ?? '?'}`,
+    message: detail || CLI_LOGIN_FAILED_MESSAGE,
     loginUrl: bestUrl,
+    rawOutput,
   };
 }
 

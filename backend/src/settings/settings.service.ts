@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { tokenHint, type CursorConnectionMode } from '../domain';
 import {
+  CLI_LOGIN_FAILED_MESSAGE,
   CLI_LOGIN_NO_URL_MESSAGE,
   type CliLoginSnapshot,
   queryCliAuthStatus,
@@ -262,23 +263,34 @@ export class SettingsService {
     return this.connection(env);
   }
 
+  private noteLoginUrl(url: string): void {
+    const prev = this.cliLoginState.loginUrl;
+    if (prev === url) return;
+    this.cliLoginState = {
+      ...this.cliLoginState,
+      loginUrl: url,
+      message:
+        'Откройте ссылку в этом браузере на той же машине, где работает backend. Процесс `agent login` на сервере должен оставаться активным.',
+    };
+  }
+
   private async runLoginTask(env: NodeJS.ProcessEnv): Promise<void> {
+    const poll = setInterval(() => {
+      void (async () => {
+        if (this.cliLoginState.status !== 'pending') return;
+        await this.ensureCliAuthChecked(env, 0);
+        if (!this.cliSessionSignedIn()) return;
+        this.cliLoginState = {
+          status: 'success',
+          loginUrl: this.cliLoginState.loginUrl,
+          message: 'Вход выполнен.',
+        };
+      })().catch(() => undefined);
+    }, 2_000);
     try {
-      const outcome = await runCliLogin(env, (url) => {
-        const prev = this.cliLoginState.loginUrl;
-        if (prev && prev.length >= url.length) return;
-        this.cliLoginState = {
-          ...this.cliLoginState,
-          loginUrl: url,
-          message: 'Откройте ссылку и войдите в Cursor.',
-        };
-      });
+      const outcome = await runCliLogin(env, (url) => this.noteLoginUrl(url));
       if (!this.cliLoginState.loginUrl && outcome.loginUrl) {
-        this.cliLoginState = {
-          ...this.cliLoginState,
-          loginUrl: outcome.loginUrl,
-          message: 'Откройте ссылку и войдите в Cursor.',
-        };
+        this.noteLoginUrl(outcome.loginUrl);
       }
       if (!this.cliLoginState.loginUrl) {
         this.cliLoginState = {
@@ -288,8 +300,8 @@ export class SettingsService {
         };
         return;
       }
-      if (outcome.ok) {
-        await this.ensureCliAuthChecked(env, 0);
+      await this.ensureCliAuthChecked(env, 0);
+      if (this.cliSessionSignedIn() || outcome.ok) {
         this.cliLoginState = {
           status: 'success',
           loginUrl: this.cliLoginState.loginUrl,
@@ -300,7 +312,7 @@ export class SettingsService {
       this.cliLoginState = {
         status: 'failed',
         loginUrl: this.cliLoginState.loginUrl,
-        message: outcome.message ?? 'Не удалось выполнить вход.',
+        message: CLI_LOGIN_FAILED_MESSAGE,
       };
     } catch (error) {
       this.cliLoginState = {
@@ -309,6 +321,8 @@ export class SettingsService {
         message:
           error instanceof Error ? error.message : 'Не удалось выполнить вход.',
       };
+    } finally {
+      clearInterval(poll);
     }
   }
 
