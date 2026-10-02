@@ -48,4 +48,32 @@ describe('SettingsService CLI session', () => {
     expect(settings.cliSessionSignedIn()).toBe(true);
     expect(settings.cliAuthReady()).toBe(true);
   });
+
+  it('startCliLogin переходит в success, когда status signed-in до выхода login', async () => {
+    const url =
+      'https://cursor.com/loginDeepControl?challenge=x&uuid=11111111-2222-3333-4444-555555555555&mode=login&redirectTarget=cli';
+    let statusCalls = 0;
+    setCliAuthExecForTests(async (input) => {
+      if (input.args[0] === 'login') {
+        input.onChunk?.('stdout', `${url}\n`);
+        await new Promise((r) => setTimeout(r, 100));
+        return { stdout: '', stderr: '', code: 0 };
+      }
+      if (input.args[0] === 'status') {
+        statusCalls += 1;
+        return {
+          stdout: JSON.stringify({ authenticated: true, email: 'dev@example.com' }),
+          stderr: '',
+          code: 0,
+        };
+      }
+      return { stdout: '', stderr: '', code: 1 };
+    });
+    await settings.startCliLogin(process.env);
+    await new Promise((r) => setTimeout(r, 250));
+    const view = settings.connection(process.env);
+    expect(view.cliLogin.status).toBe('success');
+    expect(view.cliSessionSignedIn).toBe(true);
+    expect(statusCalls).toBeGreaterThan(0);
+  });
 });
