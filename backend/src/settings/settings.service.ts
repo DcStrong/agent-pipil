@@ -18,16 +18,25 @@ export class SettingsService {
     return this.store.read().cursorMode;
   }
 
-  /** Публичный вид подключения. Полный токен сюда не попадает. */
+  /** Публичный вид подключения. Полные секреты сюда не попадают. */
   connection(env: NodeJS.ProcessEnv = process.env): CursorConnection {
     const mode = this.connectionMode();
     if (mode === 'cli') {
-      return {
-        connected: isAgentCliAvailable(env),
-        source: 'none',
-        hint: null,
-        mode,
-      };
+      const agent = isAgentCliAvailable(env);
+      const saved = this.store.read().cursorCliApiKey;
+      if (saved && saved.length >= 8) {
+        return {
+          connected: agent,
+          source: 'saved',
+          hint: tokenHint(saved),
+          mode,
+        };
+      }
+      const fromEnv = env.CURSOR_API_KEY?.trim();
+      if (fromEnv && fromEnv.length >= 8) {
+        return { connected: agent, source: 'env', hint: null, mode };
+      }
+      return { connected: false, source: 'none', hint: null, mode };
     }
     const saved = this.store.read().cursorToken;
     if (saved && saved.length >= 8) {
@@ -47,6 +56,10 @@ export class SettingsService {
 
   /** Шаг Cursor в текущем режиме можно запускать без ошибки конфигурации. */
   cursorReady(env: NodeJS.ProcessEnv = process.env): boolean {
+    const mode = this.connectionMode();
+    if (mode === 'cli') {
+      return isAgentCliAvailable(env) && this.cliApiKey(env) !== null;
+    }
     return this.connection(env).connected;
   }
 
@@ -64,18 +77,38 @@ export class SettingsService {
     return null;
   }
 
-  save(token: string): CursorConnection {
-    const trimmed = token.trim();
+  /** Ключ CURSOR_API_KEY для локального CLI. Только внутри backend. */
+  cliApiKey(env: NodeJS.ProcessEnv = process.env): string | null {
+    const saved = this.store.read().cursorCliApiKey;
+    if (saved && saved.trim().length >= 8) return saved.trim();
+    const fromEnv = env.CURSOR_API_KEY?.trim();
+    if (fromEnv && fromEnv.length >= 8) return fromEnv;
+    return null;
+  }
+
+  private validateSecret(value: string, label: string): string {
+    const trimmed = value.trim();
     if (trimmed.length < 8) {
-      throw new BadRequestException(
-        'Токен короче 8 символов сохранить нельзя.',
-      );
+      throw new BadRequestException(`${label} короче 8 символов сохранить нельзя.`);
     }
     if (trimmed.length > 500) {
-      throw new BadRequestException('Токен длиннее 500 символов.');
+      throw new BadRequestException(`${label} длиннее 500 символов.`);
     }
+    return trimmed;
+  }
+
+  save(token: string): CursorConnection {
+    const trimmed = this.validateSecret(token, 'Токен');
     this.store.mutate((state) => {
       state.cursorToken = trimmed;
+    });
+    return this.connection();
+  }
+
+  saveCliApiKey(apiKey: string): CursorConnection {
+    const trimmed = this.validateSecret(apiKey, 'Ключ');
+    this.store.mutate((state) => {
+      state.cursorCliApiKey = trimmed;
     });
     return this.connection();
   }
@@ -92,7 +125,8 @@ export class SettingsService {
 
   clear(): CursorConnection {
     this.store.mutate((state) => {
-      state.cursorToken = null;
+      if (state.cursorMode === 'cli') state.cursorCliApiKey = null;
+      else state.cursorToken = null;
     });
     return this.connection();
   }

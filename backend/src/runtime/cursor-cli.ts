@@ -11,12 +11,16 @@ import {
   type CursorStepResult,
 } from './cursor-client';
 
+export const CURSOR_CLI_MISSING_KEY_MESSAGE =
+  'Нельзя выполнить шаг Cursor: не задан CURSOR_API_KEY. Выполните `agent login` на машине, где работает backend, или сохраните ключ в настройках.';
+
 export type CliExecInput = {
   binary: string;
   args: string[];
   cwd: string;
   prompt: string;
   timeoutMs: number;
+  env: NodeJS.ProcessEnv;
 };
 
 export type CliExecFn = (input: CliExecInput) => Promise<{
@@ -115,11 +119,22 @@ function assertWorkspaceExists(input: CursorStepInput): string {
   return workspace;
 }
 
+function resolveCliApiKey(
+  env: NodeJS.ProcessEnv,
+  cliApiKey: string | null | undefined,
+): string {
+  const key = cliApiKey?.trim() || env.CURSOR_API_KEY?.trim();
+  if (!key || key.length < 8) {
+    throw new Error(CURSOR_CLI_MISSING_KEY_MESSAGE);
+  }
+  return key;
+}
+
 const defaultExec: CliExecFn = (input) =>
   new Promise((resolve, reject) => {
     const child = spawn(input.binary, [...input.args, input.prompt], {
       cwd: input.cwd,
-      env: process.env,
+      env: input.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -148,6 +163,7 @@ const defaultExec: CliExecFn = (input) =>
 export async function runCursorCliStep(
   input: CursorStepInput,
   env: NodeJS.ProcessEnv = process.env,
+  cliApiKey: string | null = null,
 ): Promise<CursorStepResult> {
   const binary = resolveAgentBinary(env);
   if (!binary) {
@@ -155,6 +171,8 @@ export async function runCursorCliStep(
       'Нельзя выполнить шаг Cursor: на сервере не найден CLI «agent». Установите Cursor CLI (curl https://cursor.com/install) и добавьте его в PATH на машине, где работает backend.',
     );
   }
+  const apiKey = resolveCliApiKey(env, cliApiKey);
+  const spawnEnv: NodeJS.ProcessEnv = { ...env, CURSOR_API_KEY: apiKey };
   const workspace = assertWorkspaceExists(input);
   const prompt = buildPrompt(input);
   const cwd =
@@ -168,6 +186,7 @@ export async function runCursorCliStep(
     cwd,
     prompt,
     timeoutMs: readCliTimeoutMs(env),
+    env: spawnEnv,
   });
   if (result.code !== 0) {
     const detail =

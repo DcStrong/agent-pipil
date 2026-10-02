@@ -24,9 +24,14 @@ export class SettingsController {
     if (typeof body !== 'object' || body === null || Array.isArray(body)) {
       throw new BadRequestException('Ожидался JSON-объект.');
     }
-    const token = (body as { token?: unknown }).token;
-    if (typeof token !== 'string')
-      throw new BadRequestException('Нужно поле token.');
+    const record = body as { token?: unknown; apiKey?: unknown };
+    if (typeof record.apiKey === 'string') {
+      return this.settings.saveCliApiKey(record.apiKey);
+    }
+    const token = record.token;
+    if (typeof token !== 'string') {
+      throw new BadRequestException('Нужно поле token или apiKey.');
+    }
     return this.settings.save(token);
   }
 

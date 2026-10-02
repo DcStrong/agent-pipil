@@ -156,6 +156,11 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ token }),
     }),
+  saveCursorCliKey: (apiKey: string) =>
+    request<CursorConnection>('/api/settings/cursor', {
+      method: 'PUT',
+      body: JSON.stringify({ apiKey }),
+    }),
   clearCursor: () => request<CursorConnection>('/api/settings/cursor', { method: 'DELETE' }),
   saveCursorMode: (mode: CursorConnectionMode) =>
     request<CursorConnection>('/api/settings/cursor/mode', {

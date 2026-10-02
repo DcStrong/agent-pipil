@@ -297,6 +297,26 @@ describe('RunsService', () => {
     });
   });
 
+  it('сохраняет ключ CLI и не возвращает его целиком', async () => {
+    const { settings } = await make({ token: false });
+    settings.setMode('cli');
+    const secret = 'cursor_cli_key_value';
+    const saved = settings.saveCliApiKey(secret);
+    expect(saved).toEqual({
+      connected: false,
+      source: 'saved',
+      hint: '••••alue',
+      mode: 'cli',
+    });
+    expect(JSON.stringify(saved)).not.toContain(secret);
+    expect(settings.clear()).toEqual({
+      connected: false,
+      source: 'none',
+      hint: null,
+      mode: 'cli',
+    });
+  });
+
   it('в режиме CLI вызывает подменённый agent без сети', async () => {
     setCursorCliExecForTests(async () => ({
       stdout: 'Ответ локального CLI.',
@@ -311,6 +331,7 @@ describe('RunsService', () => {
       await chmod(fakeAgent, 0o755);
       process.env.CURSOR_AGENT_BIN = fakeAgent;
       settings.setMode('cli');
+      settings.saveCliApiKey('cursor_cli_run_test_key');
       const started = runs.start('workflow_supervised', 'Проверка CLI', {
         roleIds: ['agent_builder'],
         projectId,

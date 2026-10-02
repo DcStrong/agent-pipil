@@ -152,6 +152,7 @@ export class RunsService {
           live,
           cursorMode,
           cursorToken: this.settings.apiToken(),
+          cursorCliApiKey: this.settings.cliApiKey(),
           projectFolder: snapshot.folder,
           workspaceFile: snapshot.workspaceFile,
         },
