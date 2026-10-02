@@ -18,18 +18,37 @@ export type CliLoginSnapshot = {
   message: string | null;
 };
 
+export const CLI_LOGIN_NO_URL_MESSAGE =
+  'CLI не выдал ссылку для входа. Попробуйте «Войти через Cursor» ещё раз или сохраните ключ CURSOR_API_KEY.';
+
 let authExecForTests: AgentSpawnFn | null = null;
 
 export function setCliAuthExecForTests(fn: AgentSpawnFn | null): void {
   authExecForTests = fn;
 }
 
-const LOGIN_URL_PATTERN = /https:\/\/[^\s"'<>]+/i;
+/** Символы, допустимые в https-URL до пробела или кавычек (RFC 3986, без усечения query). */
+const LOGIN_URL_PATTERN = /https:\/\/[^\s"'`<>\u0000-\u001f\]]+/gi;
 
+export function stripTerminalNoise(text: string): string {
+  return text.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
+function trimLoginUrlSuffix(url: string): string {
+  return url.replace(/[),.;\]]+$/u, '');
+}
+
+/** Из текста CLI — самая длинная https-ссылка, без перекодирования и обрезки query. */
 export function extractLoginUrl(text: string): string | null {
-  const match = text.match(LOGIN_URL_PATTERN);
-  if (!match) return null;
-  return match[0]!.replace(/[),.]+$/, '');
+  const cleaned = stripTerminalNoise(text);
+  const matches = cleaned.match(LOGIN_URL_PATTERN);
+  if (!matches?.length) return null;
+  let best = trimLoginUrlSuffix(matches[0]!);
+  for (const raw of matches) {
+    const candidate = trimLoginUrlSuffix(raw);
+    if (candidate.length > best.length) best = candidate;
+  }
+  return best.length > 0 ? best : null;
 }
 
 function parseStatusJson(raw: string): CliAuthStatus | null {
@@ -110,6 +129,20 @@ async function runAuthCommand(
   });
 }
 
+function trackLoginUrl(
+  buffer: string,
+  bestUrl: string | null,
+  onUrl?: (url: string) => void,
+): string | null {
+  const found = extractLoginUrl(buffer);
+  if (!found) return bestUrl;
+  if (!bestUrl || found.length > bestUrl.length) {
+    onUrl?.(found);
+    return found;
+  }
+  return bestUrl;
+}
+
 export async function queryCliAuthStatus(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<CliAuthStatus> {
@@ -130,27 +163,48 @@ export async function queryCliAuthStatus(
   return parseStatusText(`${fallback.stdout}\n${fallback.stderr}`);
 }
 
+export type CliLoginOutcome = {
+  ok: boolean;
+  message: string | null;
+  loginUrl: string | null;
+};
+
 export async function runCliLogin(
   env: NodeJS.ProcessEnv = process.env,
   onUrl?: (url: string) => void,
-): Promise<{ ok: boolean; message: string | null }> {
+): Promise<CliLoginOutcome> {
   const loginEnv: NodeJS.ProcessEnv = { ...env, NO_OPEN_BROWSER: '1' };
+  let streamBuffer = '';
+  let bestUrl: string | null = null;
   const result = await runAuthCommand(
     ['login'],
     loginEnv,
     600_000,
     (_stream, chunk) => {
-      const url = extractLoginUrl(chunk);
-      if (url) onUrl?.(url);
+      streamBuffer += chunk;
+      bestUrl = trackLoginUrl(streamBuffer, bestUrl, onUrl);
     },
   );
-  const detail = `${result.stdout}\n${result.stderr}`.trim();
+  const merged = `${streamBuffer}\n${result.stdout}\n${result.stderr}`;
+  bestUrl = trackLoginUrl(merged, bestUrl, onUrl);
   if (result.code === 0) {
-    return { ok: true, message: null };
+    if (!bestUrl) {
+      return { ok: false, message: CLI_LOGIN_NO_URL_MESSAGE, loginUrl: null };
+    }
+    return { ok: true, message: null, loginUrl: bestUrl };
   }
+  if (!bestUrl) {
+    return {
+      ok: false,
+      message: CLI_LOGIN_NO_URL_MESSAGE,
+      loginUrl: null,
+    };
+  }
+  const detail = `${result.stdout}\n${result.stderr}`.trim();
   return {
     ok: false,
     message: detail || `Код выхода ${result.code ?? '?'}`,
+    loginUrl: bestUrl,
   };
 }
 
