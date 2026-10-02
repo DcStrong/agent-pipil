@@ -164,6 +164,11 @@ export class BoardService implements OnModuleInit, OnModuleDestroy {
         'На проверку задача попадает сама, когда работа закончена. Этот шаг нельзя перескочить.',
       );
     }
+    if (status === 'completed') {
+      throw new BadRequestException(
+        'Завершить задачу можно на экране проверки.',
+      );
+    }
     if (status === 'new') {
       throw new BadRequestException('Вернуть задачу в новые уже нельзя.');
     }
@@ -210,6 +215,91 @@ export class BoardService implements OnModuleInit, OnModuleDestroy {
       task.updatedAt = now;
     });
     return this.must(id);
+  }
+
+  /** Задача на проверке принята: уходит с доски в завершённые. */
+  completeReview(id: string): BoardTask {
+    const current = this.must(id);
+    if (current.status !== 'review') {
+      throw new BadRequestException('Завершить можно только задачу на проверке.');
+    }
+    this.stopLinkedRun(current.runId);
+    const now = new Date().toISOString();
+    this.store.mutate((state) => {
+      const task = state.tasks.find((item) => item.id === id);
+      if (!task) return;
+      task.status = 'completed';
+      task.phase = 'done';
+      task.updatedAt = now;
+    });
+    return this.must(id);
+  }
+
+  /** Дополнение от владельца и снова в работу: план и ход команды начинаются заново. */
+  reopenFromReview(id: string, note: string): BoardTask {
+    const trimmed = note.trim();
+    if (!trimmed) {
+      throw new BadRequestException('Напишите, что добавить к задаче.');
+    }
+    if (trimmed.length > 4000) {
+      throw new BadRequestException('Дополнение короче 4000 символов.');
+    }
+    const current = this.must(id);
+    if (current.status !== 'review') {
+      throw new BadRequestException(
+        'Вернуть в работу можно только задачу на проверке.',
+      );
+    }
+    this.stopLinkedRun(current.runId);
+    const stamp = new Date().toISOString();
+    const block = `\n\n---\nДополнение (${stamp.slice(0, 10)}):\n${trimmed}`;
+    const agents = this.store.read().agents;
+    let runId: string | null = null;
+    this.store.mutate((state) => {
+      const task = state.tasks.find((item) => item.id === id);
+      if (!task) return;
+      task.description = task.description.trim()
+        ? `${task.description.trim()}${block}`
+        : trimmed;
+      task.status = 'in_progress';
+      task.phase = 'working';
+      task.plan = null;
+      task.activity = task.team.map((member) =>
+        pickup(
+          member,
+          agents.find((agent) => agent.id === member.agentId),
+        ),
+      );
+      task.updatedAt = stamp;
+    });
+    const refreshed = this.must(id);
+    runId = this.startRunForTask(refreshed);
+    this.store.mutate((state) => {
+      const task = state.tasks.find((item) => item.id === id);
+      if (!task) return;
+      task.runId = runId;
+      task.updatedAt = new Date().toISOString();
+    });
+    this.schedule(id, () => this.finishPickup(id));
+    return this.must(id);
+  }
+
+  /** Ответ на вопрос агента в связанном запуске, пока задача на проверке. */
+  answerFromReview(
+    id: string,
+    text: string,
+  ): { task: BoardTask; run: ReturnType<RunsService['get']> } {
+    const task = this.must(id);
+    if (task.status !== 'review') {
+      throw new BadRequestException(
+        'Ответить можно только по задаче на проверке.',
+      );
+    }
+    if (!task.runId) {
+      throw new BadRequestException('У задачи нет запуска для ответа.');
+    }
+    const run = this.runs.answer(task.runId, text);
+    return { task: this.must(id), run };
   }
 
   /** Отдаёт план в сборку. Из правки сразу на проверку перейти нельзя. */
@@ -443,6 +533,23 @@ export class BoardService implements OnModuleInit, OnModuleDestroy {
       fn();
     }, delay);
     this.timers.set(taskId, timer);
+  }
+
+  private stopLinkedRun(runId: string | null): void {
+    if (!runId) return;
+    try {
+      const run = this.runs.get(runId);
+      if (
+        run.status === 'running' ||
+        run.status === 'waiting_approval' ||
+        run.status === 'waiting_user' ||
+        run.status === 'waiting_plan'
+      ) {
+        this.runs.stop(runId);
+      }
+    } catch {
+      // Запуск уже удалён или недоступен — доску это не блокирует.
+    }
   }
 
   private must(id: string): BoardTask {

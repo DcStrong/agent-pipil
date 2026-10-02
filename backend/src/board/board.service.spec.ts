@@ -335,6 +335,50 @@ describe('BoardService', () => {
     expect(task.projectLabel).toBe('test-proj');
   });
 
+  it('на проверке: завершить, вернуть с дополнением и ответить — другие задачи не трогает', async () => {
+    const { board, projectId, store } = await make();
+    const keeper = board.create('Остаётся', 'Не меняется', {
+      projectId,
+      team: [{ agentId: 'role_analyst', mode: 'ask' }],
+    });
+    const task = board.create('На проверку', 'Исходный текст', {
+      projectId,
+      team: [{ agentId: 'role_analyst', mode: 'ask' }],
+    });
+    board.move(task.id, 'in_progress');
+    await settle();
+    expect(board.get(task.id).status).toBe('review');
+    expect(board.get(keeper.id).status).toBe('new');
+
+    const runs = moduleRef!.get(RunsService);
+    const runId = board.get(task.id).runId!;
+    store.mutate((state) => {
+      const live = state.runs.find((item) => item.id === runId);
+      if (live) {
+        live.status = 'waiting_user';
+        live.pendingQuestion = 'Уточните контракт?';
+      }
+    });
+    jest.spyOn(runs, 'answer').mockReturnValue({
+      ...runs.get(runId),
+      status: 'running',
+      pendingQuestion: null,
+    });
+    board.answerFromReview(task.id, 'Ответ владельца');
+    expect(runs.answer).toHaveBeenCalledWith(runId, 'Ответ владельца');
+
+    const reopened = board.reopenFromReview(task.id, 'Нужен ещё один проход');
+    expect(reopened.status).toBe('in_progress');
+    expect(reopened.description).toContain('Нужен ещё один проход');
+    expect(board.get(keeper.id).title).toBe('Остаётся');
+    await settle();
+    expect(board.get(task.id).status).toBe('review');
+
+    const completed = board.completeReview(task.id);
+    expect(completed.status).toBe('completed');
+    expect(board.get(keeper.id).status).toBe('new');
+  });
+
   it('после перезапуска доводит уже отданную сборку до проверки', async () => {
     const { board, projectId } = await make();
     await moduleRef?.init();

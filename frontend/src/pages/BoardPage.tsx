@@ -369,7 +369,7 @@ export function BoardPage() {
             ) : null}
           </section>
 
-          <div className="row-actions">
+          <div className="compose-footer">
             <button type="submit" className="primary" data-testid="create-task" disabled={busy || !title.trim()}>
               Создать
             </button>
@@ -454,6 +454,11 @@ function TaskCard({
     if (event.defaultPrevented) return
     if (skipClick.current) {
       skipClick.current = false
+      return
+    }
+    if (task.status === 'review' || task.status === 'completed') {
+      setOpenHint(null)
+      window.location.hash = href({ name: 'task', taskId: task.id })
       return
     }
     if (task.runId) {

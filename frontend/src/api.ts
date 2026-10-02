@@ -185,6 +185,18 @@ export const api = {
     request<BoardTask>(`/api/board/${id}/plan`, { method: 'PUT', body: JSON.stringify({ text }) }),
   handPlan: (id: string, text: string) =>
     request<BoardTask>(`/api/board/${id}/build`, { method: 'POST', body: JSON.stringify({ text }) }),
+  completeTask: (id: string) =>
+    request<BoardTask>(`/api/board/${id}/complete`, { method: 'POST', body: '{}' }),
+  reopenTask: (id: string, note: string) =>
+    request<BoardTask>(`/api/board/${id}/reopen`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    }),
+  answerTask: (id: string, text: string) =>
+    request<{ task: BoardTask; run: Run }>(`/api/board/${id}/answer`, {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
   /** Списки .cursor. Пустая папка возвращает предложение, не создавая файлов. */
   cursorProject: (folder: string) =>
     request<CursorProjectView>(`/api/project/cursor?folder=${encodeURIComponent(folder)}`),
