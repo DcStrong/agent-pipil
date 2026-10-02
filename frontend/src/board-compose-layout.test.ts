@@ -11,8 +11,8 @@ describe('форма compose на доске', () => {
     expect(styles).toMatch(/\.compose\s*\{[\s\S]*overflow-y:\s*auto/)
   })
 
-  it('выстраивает кнопки формы в колонку', () => {
-    expect(styles).toMatch(/\.compose \.row-actions\s*\{[\s\S]*flex-direction:\s*column/)
-    expect(styles).toMatch(/\.team-pick \.row-actions\s*\{[\s\S]*flex-direction:\s*column/)
+  it('выстраивает кнопки исполнителей и подвал формы в строки с переносом', () => {
+    expect(styles).toMatch(/\.team-pick \.row-actions\s*\{[\s\S]*flex-direction:\s*row/)
+    expect(styles).toMatch(/\.compose-footer\s*\{[\s\S]*flex-wrap:\s*wrap/)
   })
 })

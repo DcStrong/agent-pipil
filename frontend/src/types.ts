@@ -260,7 +260,7 @@ export interface Health {
 
 export type StreamMessage = { type: 'run'; run: Run } | { type: 'idle' }
 
-export type BoardStatus = 'new' | 'in_progress' | 'review'
+export type BoardStatus = 'new' | 'in_progress' | 'review' | 'completed'
 export type WorkMode = 'ask' | 'plan' | 'agent'
 export type BoardPhase = 'idle' | 'working' | 'plan' | 'build' | 'done'
 export type MemberState = 'working' | 'waiting' | 'done'

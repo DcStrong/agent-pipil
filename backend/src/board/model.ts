@@ -5,7 +5,7 @@
  * правка, затем сборка, затем проверка. Перескочить его нельзя.
  */
 
-export type BoardStatus = 'new' | 'in_progress' | 'review';
+export type BoardStatus = 'new' | 'in_progress' | 'review' | 'completed';
 
 /** ask — вопрос без плана, plan — план до сборки, agent — работа по плану или сразу. */
 export type WorkMode = 'ask' | 'plan' | 'agent';
@@ -124,7 +124,12 @@ function text(value: unknown, label: string): string {
 }
 
 function boardStatus(value: unknown): BoardStatus {
-  if (value === 'new' || value === 'in_progress' || value === 'review') {
+  if (
+    value === 'new' ||
+    value === 'in_progress' ||
+    value === 'review' ||
+    value === 'completed'
+  ) {
     return value;
   }
   return fail('статус задачи');

@@ -1,5 +1,5 @@
 /** Подписи доски. Значения статусов в данных не переводятся. */
-import type { AgentKind, BoardPhase, MemberState, WorkMode } from './types'
+import type { AgentKind, BoardPhase, BoardStatus, MemberState, WorkMode } from './types'
 
 export function defaultWorkMode(kind: AgentKind): WorkMode {
   if (kind === 'architect' || kind === 'planner') return 'plan'
@@ -23,6 +23,13 @@ export function columnLabel(status: 'new' | 'in_progress' | 'review'): string {
   if (status === 'new') return 'Новые'
   if (status === 'in_progress') return 'В работе'
   return 'На проверке'
+}
+
+export function taskStatusLabel(status: BoardStatus): string {
+  if (status === 'new') return 'Новая'
+  if (status === 'in_progress') return 'В работе'
+  if (status === 'review') return 'На проверке'
+  return 'Завершена'
 }
 
 /** Какой шаг порядка плана сейчас подсвечен. Вопрос этот порядок не занимает. */

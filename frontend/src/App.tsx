@@ -7,6 +7,7 @@ import { AgentsPage } from './pages/AgentsPage'
 import { BoardPage } from './pages/BoardPage'
 import { CanvasPage } from './pages/CanvasPage'
 import { PlanPage } from './pages/PlanPage'
+import { TaskPage } from './pages/TaskPage'
 import { RunPage } from './pages/RunPage'
 import { ProjectPage } from './pages/ProjectPage'
 import { RunsPage } from './pages/RunsPage'
@@ -18,6 +19,7 @@ const titles: Record<Route['name'], string> = {
   workflows: 'Процессы',
   canvas: 'Холст',
   board: 'Доска',
+  task: 'Задача',
   plan: 'План',
   runs: 'Запуски',
   run: 'Запуск',
@@ -50,6 +52,7 @@ function Shell() {
         {route.name === 'workflows' ? <WorkflowsPage /> : null}
         {route.name === 'canvas' ? <CanvasPage workflowId={route.workflowId} /> : null}
         {route.name === 'board' ? <BoardPage /> : null}
+        {route.name === 'task' ? <TaskPage taskId={route.taskId} /> : null}
         {route.name === 'plan' ? <PlanPage taskId={route.taskId} /> : null}
         {route.name === 'runs' ? <RunsPage /> : null}
         {route.name === 'run' ? <RunPage runId={route.runId} /> : null}

@@ -1024,16 +1024,15 @@ code { font-family: ui-monospace, monospace; font-size: 0.92em; }
   max-width: 100%;
   overflow-wrap: anywhere;
 }
-.compose .row-actions {
-  flex-direction: column;
-  align-items: flex-start;
+.compose-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 10px;
-  margin: 0;
-  width: 100%;
+  margin-top: 4px;
 }
-.compose .row-actions > button,
-.compose .row-actions > a {
-  align-self: flex-start;
+.compose-footer > button {
+  flex: none;
   max-width: 100%;
   white-space: normal;
 }
@@ -1060,16 +1059,18 @@ code { font-family: ui-monospace, monospace; font-size: 0.92em; }
 }
 .team-pick .row-actions {
   margin-top: 2px;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
   width: 100%;
 }
 .team-pick .row-actions > button {
-  width: max-content;
-  max-width: 100%;
+  flex: none;
+  max-width: calc(50% - 5px);
+  min-width: min(100%, 200px);
   white-space: normal;
-  text-align: left;
+  text-align: center;
 }
 .team-row {
   display: grid;
@@ -1205,6 +1206,84 @@ code { font-family: ui-monospace, monospace; font-size: 0.92em; }
 .plan-steps li.done { border-color: #1d4a32; color: var(--green); }
 .plan-editor { min-height: 320px; line-height: 1.45; }
 .plan-page .now { margin-top: 12px; }
+
+.task-page { max-width: 820px; }
+.task-page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0 20px;
+}
+.task-page-head h1 { margin: 6px 0 8px; font-size: 26px; }
+.task-body-block,
+.agent-summaries,
+.review-actions,
+.review-question {
+  padding: 16px 18px;
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.task-body-block h2,
+.agent-summaries h2,
+.review-actions h2,
+.review-question h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.task-description {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.agent-step-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.agent-step {
+  padding-bottom: 12px;
+  border-bottom: 1px solid #222226;
+}
+.agent-step:last-child { border-bottom: 0; padding-bottom: 0; }
+.agent-step-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+.agent-step-summary {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text);
+}
+.agent-step-detail {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #101012;
+  border: 1px solid #2a2a30;
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.45;
+  max-height: 280px;
+  overflow: auto;
+}
+.review-action-row { margin-top: 4px; }
+.pill.new { background: #222228; color: var(--muted); }
+.pill.in_progress { background: var(--amber-bg); color: var(--amber); }
+.pill.review { background: #1a2438; color: #8eaae6; }
 
 @media (max-width: 980px) {
   .board-page { padding: 20px 16px 24px; }

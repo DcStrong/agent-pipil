@@ -43,10 +43,17 @@ function teamOf(value: unknown): TeamInput[] {
 }
 
 function statusOf(value: unknown): BoardStatus {
-  if (value === 'new' || value === 'in_progress' || value === 'review') {
+  if (
+    value === 'new' ||
+    value === 'in_progress' ||
+    value === 'review' ||
+    value === 'completed'
+  ) {
     return value;
   }
-  throw new BadRequestException('Статус: new, in_progress или review.');
+  throw new BadRequestException(
+    'Статус: new, in_progress, review или completed.',
+  );
 }
 
 @Controller('board')
@@ -131,5 +138,28 @@ export class BoardController {
       id,
       typeof record.text === 'string' ? record.text : undefined,
     );
+  }
+
+  @Post(':id/complete')
+  complete(@Param('id') id: string): BoardTask {
+    return this.board.completeReview(id);
+  }
+
+  @Post(':id/reopen')
+  reopen(@Param('id') id: string, @Body() body: unknown): BoardTask {
+    const record = asRecord(body);
+    if (typeof record.note !== 'string') {
+      throw new BadRequestException('Нужна заметка для возврата в работу.');
+    }
+    return this.board.reopenFromReview(id, record.note);
+  }
+
+  @Post(':id/answer')
+  answer(@Param('id') id: string, @Body() body: unknown) {
+    const record = asRecord(body);
+    if (typeof record.text !== 'string') {
+      throw new BadRequestException('Нужен текст ответа.');
+    }
+    return this.board.answerFromReview(id, record.text);
   }
 }

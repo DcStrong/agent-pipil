@@ -176,7 +176,7 @@ describe('BoardPage — новая задача', () => {
     expect(screen.queryByTestId('board-form-error')).toBeNull()
   })
 
-  it('клик по карточке с запуском открывает страницу запуска', () => {
+  it('клик по карточке на проверке открывает экран задачи', () => {
     harness.live = {
       ...liveState(),
       tasks: [
@@ -191,7 +191,43 @@ describe('BoardPage — новая задача', () => {
           workflowName: 'Вопрос',
           runId: 'run_board_1',
           team: [{ agentId: 'role_analyst', mode: 'ask' }],
-          phase: 'idle',
+          phase: 'done',
+          activity: [
+            {
+              agentId: 'role_analyst',
+              agentName: 'Аналитик',
+              mode: 'ask',
+              state: 'done',
+              note: 'Краткая сводка шага.',
+            },
+          ],
+          plan: null,
+          createdAt: '',
+          updatedAt: '',
+        },
+      ],
+    }
+    render(<BoardPage />)
+    fireEvent.click(screen.getByTestId('task-card'))
+    expect(window.location.hash).toBe('#/task/t-review')
+  })
+
+  it('клик по карточке в работе с запуском открывает страницу запуска', () => {
+    harness.live = {
+      ...liveState(),
+      tasks: [
+        {
+          id: 't-review',
+          title: 'test',
+          description: 'привет',
+          status: 'in_progress',
+          projectId: 'p1',
+          projectLabel: 'myProject',
+          workflowId: 'wf1',
+          workflowName: 'Вопрос',
+          runId: 'run_board_1',
+          team: [{ agentId: 'role_analyst', mode: 'ask' }],
+          phase: 'working',
           activity: [
             {
               agentId: 'role_analyst',
