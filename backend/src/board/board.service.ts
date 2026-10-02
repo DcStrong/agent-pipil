@@ -12,7 +12,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import type { Agent, StepMode } from '../domain';
+import type { Agent, StepMode, WorkflowStep } from '../domain';
 import { displayName } from '../runtime/saved-project';
 import { orderSteps } from '../runtime/step-graph';
 import { ProjectsService } from '../projects/projects.service';
@@ -371,7 +371,7 @@ export class BoardService implements OnModuleInit, OnModuleDestroy {
   }
 
   private teamFromWorkflow(
-    steps: Array<{ agentId: string; mode: StepMode }>,
+    steps: WorkflowStep[],
     agents: Agent[],
   ): TeamMember[] {
     const ordered = orderSteps(steps);
@@ -392,7 +392,9 @@ export class BoardService implements OnModuleInit, OnModuleDestroy {
       });
     }
     if (members.length === 0) {
-      throw new BadRequestException('Из процесса не получилось собрать команду.');
+      throw new BadRequestException(
+        'Из процесса не получилось собрать команду.',
+      );
     }
     return members;
   }
