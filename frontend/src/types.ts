@@ -221,11 +221,25 @@ export interface CursorProjectView {
 
 export type CursorConnectionMode = 'cli' | 'api'
 
+export type CursorConnectionSource = 'none' | 'saved' | 'env' | 'session'
+
+export type CursorCliLoginPhase = 'idle' | 'pending' | 'success' | 'failed'
+
+export interface CursorCliLoginState {
+  status: CursorCliLoginPhase
+  loginUrl: string | null
+  message: string | null
+}
+
 export interface CursorConnection {
   connected: boolean
-  source: 'none' | 'saved' | 'env'
+  source: CursorConnectionSource
   hint: string | null
   mode: CursorConnectionMode
+  cliAgentAvailable: boolean
+  cliSessionSignedIn: boolean
+  cliAccountLabel: string | null
+  cliLogin: CursorCliLoginState
 }
 
 export type SavedProjectKind = 'folder' | 'workspace'

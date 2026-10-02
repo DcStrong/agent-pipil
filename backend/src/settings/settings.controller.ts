@@ -5,6 +5,7 @@ import {
   Delete,
   Get,
   Patch,
+  Post,
   Put,
 } from '@nestjs/common';
 import type { CursorConnectionMode } from '../domain';
@@ -15,8 +16,8 @@ export class SettingsController {
   constructor(private readonly settings: SettingsService) {}
 
   @Get()
-  get(): CursorConnection {
-    return this.settings.connection();
+  async get(): Promise<CursorConnection> {
+    return this.settings.connectionView();
   }
 
   @Put()
@@ -24,15 +25,30 @@ export class SettingsController {
     if (typeof body !== 'object' || body === null || Array.isArray(body)) {
       throw new BadRequestException('Ожидался JSON-объект.');
     }
-    const token = (body as { token?: unknown }).token;
-    if (typeof token !== 'string')
-      throw new BadRequestException('Нужно поле token.');
+    const record = body as { token?: unknown; apiKey?: unknown };
+    if (typeof record.apiKey === 'string') {
+      return this.settings.saveCliApiKey(record.apiKey);
+    }
+    const token = record.token;
+    if (typeof token !== 'string') {
+      throw new BadRequestException('Нужно поле token или apiKey.');
+    }
     return this.settings.save(token);
   }
 
   @Delete()
   clear(): CursorConnection {
     return this.settings.clear();
+  }
+
+  @Post('cli/login')
+  async startCliLogin(): Promise<CursorConnection> {
+    return this.settings.startCliLogin();
+  }
+
+  @Post('cli/logout')
+  async logoutCliSession(): Promise<CursorConnection> {
+    return this.settings.logoutCliSession();
   }
 
   @Patch('mode')

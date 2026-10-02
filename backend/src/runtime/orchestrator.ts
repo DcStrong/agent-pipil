@@ -9,7 +9,11 @@ import type {
   RunStep,
   TaskPlan,
 } from '../domain';
-import { runCursorCliStep } from './cursor-cli';
+import {
+  CURSOR_CLI_MISSING_AUTH_MESSAGE,
+  isAgentCliAvailable,
+  runCursorCliStep,
+} from './cursor-cli';
 import { CursorClient } from './cursor-client';
 import type { CursorConnectionMode } from '../domain';
 import { writeProjectMap } from './project-folder';
@@ -167,6 +171,7 @@ export class Orchestrator {
       live: boolean;
       cursorMode: CursorConnectionMode;
       cursorToken: string | null;
+      resolveCliAuth?: () => Promise<{ ready: boolean; apiKey: string | null }>;
       projectFolder: string | null;
       workspaceFile: string | null;
     },
@@ -196,6 +201,7 @@ export class Orchestrator {
       live: boolean;
       cursorMode: CursorConnectionMode;
       cursorToken: string | null;
+      resolveCliAuth?: () => Promise<{ ready: boolean; apiKey: string | null }>;
       projectFolder: string | null;
       workspaceFile: string | null;
     },
@@ -293,6 +299,7 @@ export class Orchestrator {
       live: boolean;
       cursorMode: CursorConnectionMode;
       cursorToken: string | null;
+      resolveCliAuth?: () => Promise<{ ready: boolean; apiKey: string | null }>;
       projectFolder: string | null;
       workspaceFile: string | null;
     },
@@ -317,7 +324,7 @@ export class Orchestrator {
         : options.cursorMode === 'api' && !options.cursorConnected
           ? `${step.agentName} не может вызвать Cursor: токен не задан.`
           : options.cursorMode === 'cli' && !options.cursorConnected
-            ? `${step.agentName} не может вызвать Cursor: CLI «agent» не найден на сервере.`
+            ? `${step.agentName} не может вызвать Cursor: на сервере нужны CLI «agent» и вход или ключ CURSOR_API_KEY.`
             : `${step.agentName} не может вызвать Cursor: живой режим выключен (CURSOR_LIVE=0).`
       : `${step.agentName} открыл новый диалог «${step.title}».`;
     run.events.push({
@@ -352,7 +359,7 @@ export class Orchestrator {
           );
         }
       } else {
-        if (!options.cursorConnected) {
+        if (!isAgentCliAvailable()) {
           throw new Error(
             'Нельзя выполнить шаг Cursor: на сервере не найден CLI «agent». Установите Cursor CLI и добавьте его в PATH на машине, где работает backend.',
           );
@@ -370,6 +377,16 @@ export class Orchestrator {
     ).length;
     let first;
     if (viaCursor && options.live) {
+      let cliApiKey: string | null = null;
+      if (options.cursorMode === 'cli') {
+        const cliAuth = options.resolveCliAuth
+          ? await options.resolveCliAuth()
+          : { ready: false, apiKey: null };
+        if (!cliAuth.ready) {
+          throw new Error(CURSOR_CLI_MISSING_AUTH_MESSAGE);
+        }
+        cliApiKey = cliAuth.apiKey;
+      }
       const stepInput = {
         token: options.cursorToken ?? '',
         task: run.task,
@@ -382,7 +399,7 @@ export class Orchestrator {
       };
       const cursorResult =
         options.cursorMode === 'cli'
-          ? await runCursorCliStep(stepInput)
+          ? await runCursorCliStep(stepInput, process.env, cliApiKey)
           : await this.cursor.runStep(stepInput);
       const link =
         cursorResult.agentUrl != null

@@ -151,10 +151,19 @@ export const api = {
     }),
   stop: (id: string) => request<Run>(`/api/runs/${id}/stop`, { method: 'POST' }),
   cursor: () => request<CursorConnection>('/api/settings/cursor'),
+  startCursorCliLogin: () =>
+    request<CursorConnection>('/api/settings/cursor/cli/login', { method: 'POST' }),
+  logoutCursorCliSession: () =>
+    request<CursorConnection>('/api/settings/cursor/cli/logout', { method: 'POST' }),
   saveCursor: (token: string) =>
     request<CursorConnection>('/api/settings/cursor', {
       method: 'PUT',
       body: JSON.stringify({ token }),
+    }),
+  saveCursorCliKey: (apiKey: string) =>
+    request<CursorConnection>('/api/settings/cursor', {
+      method: 'PUT',
+      body: JSON.stringify({ apiKey }),
     }),
   clearCursor: () => request<CursorConnection>('/api/settings/cursor', { method: 'DELETE' }),
   saveCursorMode: (mode: CursorConnectionMode) =>

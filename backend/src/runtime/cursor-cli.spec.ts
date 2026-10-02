@@ -16,6 +16,7 @@ describe('runCursorCliStep', () => {
     process.env.CURSOR_AGENT_BIN = join(directory, 'fake-agent');
     await writeFile(process.env.CURSOR_AGENT_BIN!, '#!/bin/sh\n');
     await chmod(process.env.CURSOR_AGENT_BIN!, 0o755);
+    delete process.env.CURSOR_API_KEY;
   });
 
   afterEach(async () => {
@@ -25,36 +26,51 @@ describe('runCursorCliStep', () => {
     else process.env.CURSOR_AGENT_BIN = previousBin;
   });
 
-  it('вызывает agent -p --workspace с подменённым exec', async () => {
-    const calls: Array<{ binary: string; args: string[]; prompt: string }> = [];
+  it('вызывает agent -p --workspace с подменённым exec и CURSOR_API_KEY', async () => {
+    const calls: Array<{
+      binary: string;
+      args: string[];
+      prompt: string;
+      env: NodeJS.ProcessEnv;
+    }> = [];
     setCursorCliExecForTests(async (input) => {
       calls.push({
         binary: input.binary,
         args: input.args,
         prompt: input.prompt,
+        env: input.env,
       });
       return { stdout: 'Ответ CLI для теста.', stderr: '', code: 0 };
     });
-    const result = await runCursorCliStep({
-      token: '',
-      task: 'Добавить README',
-      stepTitle: 'Сборка',
-      agentName: 'Сборщик',
-      instructions: 'Собери по плану.',
-      skills: [],
-      projectFolder: directory,
-      workspaceFile: null,
-    });
+    const result = await runCursorCliStep(
+      {
+        token: '',
+        task: 'Добавить README',
+        stepTitle: 'Сборка',
+        agentName: 'Сборщик',
+        instructions: 'Собери по плану.',
+        skills: [],
+        projectFolder: directory,
+        workspaceFile: null,
+      },
+      process.env,
+      'cursor_cli_secret_key',
+    );
     expect(result.text).toContain('CLI');
     expect(calls).toHaveLength(1);
     expect(calls[0]?.args).toEqual(['-p', '--workspace', directory]);
     expect(calls[0]?.prompt).toContain('README');
+    expect(calls[0]?.env.CURSOR_API_KEY).toBe('cursor_cli_secret_key');
   });
 
-  it('без CLI объясняет причину по-русски', async () => {
-    delete process.env.CURSOR_AGENT_BIN;
-    await expect(
-      runCursorCliStep({
+  it('без ключа использует сессию CLI и не подставляет CURSOR_API_KEY', async () => {
+    const calls: Array<{ env: NodeJS.ProcessEnv }> = [];
+    setCursorCliExecForTests(async (input) => {
+      calls.push({ env: input.env });
+      return { stdout: 'Ответ по сессии.', stderr: '', code: 0 };
+    });
+    await runCursorCliStep(
+      {
         token: '',
         task: 'x',
         stepTitle: 'y',
@@ -63,7 +79,30 @@ describe('runCursorCliStep', () => {
         skills: [],
         projectFolder: directory,
         workspaceFile: null,
-      }),
+      },
+      process.env,
+      null,
+    );
+    expect(calls[0]?.env.CURSOR_API_KEY).toBeUndefined();
+  });
+
+  it('без CLI объясняет причину по-русски', async () => {
+    delete process.env.CURSOR_AGENT_BIN;
+    await expect(
+      runCursorCliStep(
+        {
+          token: '',
+          task: 'x',
+          stepTitle: 'y',
+          agentName: 'z',
+          instructions: '',
+          skills: [],
+          projectFolder: directory,
+          workspaceFile: null,
+        },
+        process.env,
+        'cursor_cli_secret_key',
+      ),
     ).rejects.toThrow('agent');
   });
 

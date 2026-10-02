@@ -232,8 +232,10 @@ export interface State {
   tasks: BoardTask[];
   /** Локальные проекты и рабочие области Cursor. */
   projects: SavedProject[];
-  /** Секрет хранится только на сервере и не уходит в браузер целиком. */
+  /** Секрет Cloud Agents API; в браузер целиком не уходит. */
   cursorToken: string | null;
+  /** Ключ CURSOR_API_KEY для локального CLI; в браузер целиком не уходит. */
+  cursorCliApiKey: string | null;
   /** CLI — локальный agent на машине backend; API — Cloud Agents. */
   cursorMode: CursorConnectionMode;
 }
@@ -655,6 +657,7 @@ export function createSeedState(): State {
     tasks: [],
     projects: [],
     cursorToken: null,
+    cursorCliApiKey: null,
     cursorMode: 'cli',
   };
 }
@@ -1069,7 +1072,17 @@ export function parseState(value: unknown): State {
     fail('пресеты');
   }
   const cursorToken = value.cursorToken;
-  if (cursorToken !== null && typeof cursorToken !== 'string') fail('токен');
+  if (cursorToken !== null && cursorToken !== undefined && typeof cursorToken !== 'string') {
+    fail('токен');
+  }
+  const cursorCliApiKey = value.cursorCliApiKey;
+  if (
+    cursorCliApiKey !== null &&
+    cursorCliApiKey !== undefined &&
+    typeof cursorCliApiKey !== 'string'
+  ) {
+    fail('ключ CLI Cursor');
+  }
   const cursorModeRaw = value.cursorMode;
   let cursorMode: CursorConnectionMode = 'cli';
   if (cursorModeRaw !== undefined) {
@@ -1088,7 +1101,8 @@ export function parseState(value: unknown): State {
     projects: Array.isArray(projectsRaw)
       ? projectsRaw.map(parseSavedProject)
       : [],
-    cursorToken,
+    cursorToken: typeof cursorToken === 'string' ? cursorToken : null,
+    cursorCliApiKey: typeof cursorCliApiKey === 'string' ? cursorCliApiKey : null,
     cursorMode,
   };
 }

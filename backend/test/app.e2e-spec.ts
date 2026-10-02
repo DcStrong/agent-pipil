@@ -88,12 +88,14 @@ describe('Оркестратор (e2e)', () => {
       .put('/api/settings/cursor')
       .send({ token: secret })
       .expect(200);
-    expect(saved.body).toEqual({
-      connected: true,
-      source: 'saved',
-      hint: '••••oken',
-      mode: 'api',
-    });
+    expect(saved.body).toEqual(
+      expect.objectContaining({
+        connected: true,
+        source: 'saved',
+        hint: '••••oken',
+        mode: 'api',
+      }),
+    );
     expect(JSON.stringify(saved.body)).not.toContain(secret);
 
     await request(server).delete('/api/settings/cursor').expect(200);
