@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, OnModuleInit } from '@nestjs/common';
 import { tokenHint, type CursorConnectionMode } from '../domain';
 import {
   CLI_LOGIN_FAILED_MESSAGE,
@@ -31,7 +31,7 @@ type CliSessionSnapshot = {
 };
 
 @Injectable()
-export class SettingsService {
+export class SettingsService implements OnModuleInit {
   private cliSession: CliSessionSnapshot = {
     signedIn: false,
     accountLabel: null,
@@ -47,6 +47,10 @@ export class SettingsService {
   private loginTask: Promise<void> | null = null;
 
   constructor(private readonly store: StoreService) {}
+
+  onModuleInit(): void {
+    void this.ensureCliAuthChecked(process.env, 0).catch(() => undefined);
+  }
 
   /** Только для unit-тестов. */
   setCliSessionSnapshotForTests(snapshot: Partial<CliSessionSnapshot>): void {
@@ -72,7 +76,8 @@ export class SettingsService {
   }
 
   async connectionView(env: NodeJS.ProcessEnv = process.env): Promise<CursorConnection> {
-    await this.ensureCliAuthChecked(env, 5_000);
+    const sessionCacheMs = this.cliLoginState.status === 'pending' ? 0 : 5_000;
+    await this.ensureCliAuthChecked(env, sessionCacheMs);
     return this.buildConnection(env);
   }
 
@@ -274,21 +279,32 @@ export class SettingsService {
     };
   }
 
+  private markCliLoginSuccessIfSignedIn(): void {
+    if (this.cliLoginState.status !== 'pending') return;
+    if (!this.cliSessionSignedIn()) return;
+    this.cliLoginState = {
+      status: 'success',
+      loginUrl: this.cliLoginState.loginUrl,
+      message: 'Вход выполнен.',
+    };
+  }
+
+  private async pollCliSessionDuringLogin(env: NodeJS.ProcessEnv): Promise<void> {
+    if (this.cliLoginState.status !== 'pending') return;
+    await this.ensureCliAuthChecked(env, 0);
+    this.markCliLoginSuccessIfSignedIn();
+  }
+
   private async runLoginTask(env: NodeJS.ProcessEnv): Promise<void> {
-    const poll = setInterval(() => {
-      void (async () => {
-        if (this.cliLoginState.status !== 'pending') return;
-        await this.ensureCliAuthChecked(env, 0);
-        if (!this.cliSessionSignedIn()) return;
-        this.cliLoginState = {
-          status: 'success',
-          loginUrl: this.cliLoginState.loginUrl,
-          message: 'Вход выполнен.',
-        };
-      })().catch(() => undefined);
-    }, 2_000);
     try {
-      const outcome = await runCliLogin(env, (url) => this.noteLoginUrl(url));
+      const outcome = await runCliLogin(
+        env,
+        (url) => this.noteLoginUrl(url),
+        () => this.pollCliSessionDuringLogin(env),
+      );
+      if (this.cliLoginState.status === 'success') {
+        return;
+      }
       if (!this.cliLoginState.loginUrl && outcome.loginUrl) {
         this.noteLoginUrl(outcome.loginUrl);
       }
@@ -301,7 +317,11 @@ export class SettingsService {
         return;
       }
       await this.ensureCliAuthChecked(env, 0);
-      if (this.cliSessionSignedIn() || outcome.ok) {
+      this.markCliLoginSuccessIfSignedIn();
+      if (this.cliLoginState.status === 'success') {
+        return;
+      }
+      if (outcome.ok) {
         this.cliLoginState = {
           status: 'success',
           loginUrl: this.cliLoginState.loginUrl,
@@ -312,7 +332,7 @@ export class SettingsService {
       this.cliLoginState = {
         status: 'failed',
         loginUrl: this.cliLoginState.loginUrl,
-        message: CLI_LOGIN_FAILED_MESSAGE,
+        message: outcome.message ?? CLI_LOGIN_FAILED_MESSAGE,
       };
     } catch (error) {
       this.cliLoginState = {
@@ -321,8 +341,6 @@ export class SettingsService {
         message:
           error instanceof Error ? error.message : 'Не удалось выполнить вход.',
       };
-    } finally {
-      clearInterval(poll);
     }
   }
 

@@ -200,7 +200,7 @@ export function SettingsPage() {
             ) : null}
             {loginUrl ? (
               <label className="field">
-                <span>URL из CLI (без изменений)</span>
+                <span>URL из CLI (очищенная ссылка)</span>
                 <input type="text" readOnly value={loginUrl} data-testid="cli-login-url" />
               </label>
             ) : null}

@@ -1,5 +1,6 @@
 import {
   CLI_LOGIN_NO_URL_MESSAGE,
+  extractDeepLoginUrlFromBuffer,
   extractLoginUrl,
   normalizeCliLoginOutput,
   parseStatusText,
@@ -11,6 +12,20 @@ import {
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+const USER_BROKEN_URL =
+  'https://cursor.com/loginDeepControl?  challenge=KCGv4hy6ZiS_AGFP5QZ9RJSJ_5nfgpDTpOwBueVJ3M0&uuid=2d833842-0035-4b68-  a490-4cb3d4c95cf3&mode=login&redirectTarget=cli';
+
+const USER_CLEAN_URL =
+  'https://cursor.com/loginDeepControl?challenge=KCGv4hy6ZiS_AGFP5QZ9RJSJ_5nfgpDTpOwBueVJ3M0&uuid=2d833842-0035-4b68-a490-4cb3d4c95cf3&mode=login&redirectTarget=cli';
+
+function statusSignedIn() {
+  return {
+    stdout: JSON.stringify({ authenticated: true, email: 'dev@example.com' }),
+    stderr: '',
+    code: 0,
+  };
+}
 
 describe('cursor-cli-auth', () => {
   const previousBin = process.env.CURSOR_AGENT_BIN;
@@ -41,6 +56,17 @@ describe('cursor-cli-auth', () => {
     });
   });
 
+  it('extractLoginUrl убирает пробелы из дословной строки пользователя', () => {
+    expect(extractLoginUrl(USER_BROKEN_URL)).toBe(USER_CLEAN_URL);
+    expect(extractLoginUrl(USER_BROKEN_URL)?.includes(' ')).toBe(false);
+  });
+
+  it('extractLoginUrl убирает перенос после ? и отступ на следующей строке', () => {
+    const raw = `Open URL:\nhttps://cursor.com/loginDeepControl?\n challenge=KCGv4hy6ZiS_AGFP5QZ9RJSJ_5nfgpDTpOwBueVJ3M0&uuid=2d833842-0035-4b68-\n  a490-4cb3d4c95cf3&mode=login&redirectTarget=cli\n`;
+    expect(extractLoginUrl(raw)).toBe(USER_CLEAN_URL);
+    expect(extractDeepLoginUrlFromBuffer(raw)).toBe(USER_CLEAN_URL);
+  });
+
   it('extractLoginUrl возвращает loginDeepControl из типичного вывода CLI без изменений', () => {
     const url =
       'https://cursor.com/loginDeepControl?challenge=AbCdEf0123456789%2B%2F%3D&uuid=11111111-2222-3333-4444-555555555555&mode=login&redirectTarget=cli';
@@ -67,13 +93,25 @@ describe('cursor-cli-auth', () => {
   it('queryCliAuthStatus читает agent status через подмену exec', async () => {
     setCliAuthExecForTests(async (input) => {
       if (input.args[0] === 'status') {
-        return {
-          stdout: JSON.stringify({ authenticated: true, email: 'cli@test.dev' }),
-          stderr: '',
-          code: 0,
-        };
+        return statusSignedIn();
       }
       return { stdout: '', stderr: '', code: 1 };
+    });
+    await expect(queryCliAuthStatus()).resolves.toEqual({
+      signedIn: true,
+      accountLabel: 'dev@example.com',
+    });
+  });
+
+  it('queryCliAuthStatus при неразборчивом json с кодом 0 идёт в обычный status', async () => {
+    setCliAuthExecForTests(async (input) => {
+      if (input.args[0] !== 'status') {
+        return { stdout: '', stderr: '', code: 1 };
+      }
+      if (input.args.includes('--format')) {
+        return { stdout: 'unexpected output', stderr: '', code: 0 };
+      }
+      return { stdout: 'Logged in as cli@test.dev', stderr: '', code: 0 };
     });
     await expect(queryCliAuthStatus()).resolves.toEqual({
       signedIn: true,
@@ -90,6 +128,9 @@ describe('cursor-cli-auth', () => {
       if (input.args[0] === 'login') {
         input.onChunk?.('stdout', `Visit ${url} to sign in\n`);
         return { stdout: 'ok', stderr: '', code: 0 };
+      }
+      if (input.args[0] === 'status') {
+        return statusSignedIn();
       }
       return { stdout: '', stderr: '', code: 1 };
     });
@@ -116,6 +157,9 @@ describe('cursor-cli-auth', () => {
         input.onChunk?.('stdout', full.slice(half) + '\n');
         return { stdout: '', stderr: '', code: 0 };
       }
+      if (input.args[0] === 'status') {
+        return statusSignedIn();
+      }
       return { stdout: '', stderr: '', code: 1 };
     });
     const result = await runCliLogin(process.env);
@@ -127,6 +171,9 @@ describe('cursor-cli-auth', () => {
     setCliAuthExecForTests(async (input) => {
       if (input.args[0] === 'login') {
         return { stdout: 'waiting for browser', stderr: '', code: 0 };
+      }
+      if (input.args[0] === 'status') {
+        return { stdout: 'Not authenticated', stderr: '', code: 0 };
       }
       return { stdout: '', stderr: '', code: 1 };
     });
@@ -144,6 +191,9 @@ describe('cursor-cli-auth', () => {
         input.onChunk?.('stdout', `${url}\n`);
         return { stdout: '', stderr: 'timeout', code: 1 };
       }
+      if (input.args[0] === 'status') {
+        return { stdout: 'Not authenticated', stderr: '', code: 0 };
+      }
       return { stdout: '', stderr: '', code: 1 };
     });
     const result = await runCliLogin(process.env);
@@ -152,9 +202,62 @@ describe('cursor-cli-auth', () => {
     expect(result.message).toContain('timeout');
   });
 
-  it('normalizeCliLoginOutput склеивает перенос внутри query', () => {
-    const joined = normalizeCliLoginOutput('https://cursor.com/loginDeepControl?challenge=abc\n&uuid=1');
-    expect(joined).toContain('challenge=abc&uuid=1');
+  it('runCliLogin успех: код 0 и agent status с сессией', async () => {
+    const url =
+      'https://cursor.com/loginDeepControl?challenge=x&uuid=11111111-2222-3333-4444-555555555555&mode=login&redirectTarget=cli';
+    setCliAuthExecForTests(async (input) => {
+      if (input.args[0] === 'login') {
+        input.onChunk?.('stdout', `${url}\n`);
+        return { stdout: '', stderr: '', code: 0 };
+      }
+      if (input.args[0] === 'status') {
+        return statusSignedIn();
+      }
+      return { stdout: '', stderr: '', code: 1 };
+    });
+    const result = await runCliLogin(process.env);
+    expect(result.ok).toBe(true);
+  });
+
+  it('runCliLogin: status уже signed-in до выхода login — ok через onStatusCheck', async () => {
+    jest.useFakeTimers();
+    const url =
+      'https://cursor.com/loginDeepControl?challenge=x&uuid=11111111-2222-3333-4444-555555555555&mode=login&redirectTarget=cli';
+    let loginRelease: (() => void) | null = null;
+    const loginDone = new Promise<void>((resolve) => {
+      loginRelease = resolve;
+    });
+    setCliAuthExecForTests(async (input) => {
+      if (input.args[0] === 'login') {
+        input.onChunk?.('stdout', `${url}\n`);
+        await loginDone;
+        return { stdout: '', stderr: '', code: 0 };
+      }
+      if (input.args[0] === 'status') {
+        return statusSignedIn();
+      }
+      return { stdout: '', stderr: '', code: 1 };
+    });
+    let polledSignedIn = false;
+    const loginPromise = runCliLogin(process.env, undefined, async () => {
+      const status = await queryCliAuthStatus(process.env);
+      if (status.signedIn) polledSignedIn = true;
+    });
+    await jest.advanceTimersByTimeAsync(2_100);
+    expect(polledSignedIn).toBe(true);
+    loginRelease?.();
+    const result = await loginPromise;
+    jest.useRealTimers();
+    expect(result.ok).toBe(true);
+  });
+
+  it('normalizeCliLoginOutput возвращает компактную deep-ссылку', () => {
+    const joined = normalizeCliLoginOutput(
+      'https://cursor.com/loginDeepControl?\n challenge=abc\n&uuid=11111111-2222-3333-4444-555555555555&mode=login&redirectTarget=cli',
+    );
+    expect(joined).toBe(
+      'https://cursor.com/loginDeepControl?challenge=abc&uuid=11111111-2222-3333-4444-555555555555&mode=login&redirectTarget=cli',
+    );
   });
 
   it('runCliLogout вызывает agent logout', async () => {

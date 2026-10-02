@@ -32,20 +32,8 @@ export const CLI_LOGIN_FAILED_MESSAGE =
 export const LOGIN_DEEP_CONTROL_PATTERN =
   /https:\/\/cursor\.com\/loginDeepControl\?[A-Za-z0-9_\-./%+&=]+/i;
 
+const LOGIN_DEEP_CONTROL_START = 'https://cursor.com/loginDeepControl?';
 const LOGIN_DEEP_CONTROL_END = 'redirectTarget=cli';
-
-function extractDeepLoginUrl(normalized: string): string | null {
-  const lower = normalized.toLowerCase();
-  const start = lower.indexOf('https://cursor.com/logindeepcontrol?');
-  if (start < 0) return null;
-  const tail = normalized.slice(start);
-  const endRel = tail.toLowerCase().indexOf(LOGIN_DEEP_CONTROL_END.toLowerCase());
-  if (endRel >= 0) {
-    return tail.slice(0, endRel + LOGIN_DEEP_CONTROL_END.length);
-  }
-  const loose = tail.match(LOGIN_DEEP_CONTROL_PATTERN);
-  return loose?.[0] ?? null;
-}
 
 let authExecForTests: AgentSpawnFn | null = null;
 
@@ -55,16 +43,66 @@ export function setCliAuthExecForTests(fn: AgentSpawnFn | null): void {
 
 const GENERIC_HTTPS_PATTERN = /https:\/\/[^\s"'`<>\u0000-\u001f\]]+/gi;
 
-export function stripTerminalNoise(text: string): string {
-  return text.replace(/\x1b\[[0-9;]*m/g, '');
+/** Убирает ANSI/CSI/OSC и прочий терминальный шум из вывода CLI. */
+export function stripTerminalAnsi(text: string): string {
+  let cleaned = text.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '');
+  cleaned = cleaned.replace(/\x1b\[[0-9?]*[ -/]*[@-~]/g, '');
+  cleaned = cleaned.replace(/\x9b[0-9?]*[ -/]*[@-~]/g, '');
+  cleaned = cleaned.replace(/\x1b\[[0-9;]*m/g, '');
+  return cleaned;
 }
 
-/** Склеивает переносы строк внутри длинной ссылки из терминала. */
+/** @deprecated Используйте stripTerminalAnsi; оставлено для совместимости тестов. */
+export function stripTerminalNoise(text: string): string {
+  return stripTerminalAnsi(text);
+}
+
+function validateDeepLoginUrl(url: string): boolean {
+  if (!url.toLowerCase().startsWith(LOGIN_DEEP_CONTROL_START.toLowerCase())) {
+    return false;
+  }
+  const query = url.slice(LOGIN_DEEP_CONTROL_START.length);
+  if (!query.endsWith(LOGIN_DEEP_CONTROL_END)) {
+    return false;
+  }
+  const params = new Map<string, string>();
+  for (const part of query.split('&')) {
+    const eq = part.indexOf('=');
+    if (eq <= 0) continue;
+    params.set(part.slice(0, eq), part.slice(eq + 1));
+  }
+  const challenge = params.get('challenge');
+  const uuid = params.get('uuid');
+  if (!challenge || challenge.length === 0) return false;
+  if (!uuid || uuid.length === 0 || /\s/.test(uuid)) return false;
+  if (params.get('mode') !== 'login') return false;
+  if (params.get('redirectTarget') !== 'cli') return false;
+  return true;
+}
+
+/**
+ * Из буфера stdout/stderr CLI — ссылка loginDeepControl без пробелов и переносов.
+ * Значения query не перекодируются.
+ */
+export function extractDeepLoginUrlFromBuffer(text: string): string | null {
+  const cleaned = stripTerminalAnsi(text).replace(/\r/g, '');
+  const lower = cleaned.toLowerCase();
+  const start = lower.indexOf(LOGIN_DEEP_CONTROL_START.toLowerCase());
+  if (start < 0) return null;
+  const tail = cleaned.slice(start);
+  const endRel = tail.toLowerCase().indexOf(LOGIN_DEEP_CONTROL_END.toLowerCase());
+  if (endRel < 0) return null;
+  const slice = tail.slice(0, endRel + LOGIN_DEEP_CONTROL_END.length);
+  const compact = slice.replace(/[\s\u0000-\u001f]+/g, '');
+  return validateDeepLoginUrl(compact) ? compact : null;
+}
+
+/** @deprecated Старый путь нормализации; для новых ссылок используйте extractDeepLoginUrlFromBuffer. */
 export function normalizeCliLoginOutput(text: string): string {
-  let cleaned = stripTerminalNoise(text).replace(/\r/g, '');
-  cleaned = cleaned.replace(/([=&A-Za-z0-9_\-/%+])\n(?=[A-Za-z0-9_\-/%+&=.])/g, '$1');
-  cleaned = cleaned.replace(/\n+/g, ' ');
-  return cleaned;
+  const cleaned = stripTerminalAnsi(text).replace(/\r/g, '');
+  const deep = extractDeepLoginUrlFromBuffer(cleaned);
+  if (deep) return deep;
+  return cleaned.replace(/\n+/g, ' ');
 }
 
 function trimLoginUrlSuffix(url: string): string {
@@ -79,11 +117,11 @@ function scoreLoginUrl(url: string): number {
   return url.length;
 }
 
-/** Из текста CLI — URL входа byte-в-byte из вывода (без encode/decode). */
+/** Из текста CLI — URL входа (loginDeepControl без пробелов; прочие https — как раньше). */
 export function extractLoginUrl(text: string): string | null {
-  const normalized = normalizeCliLoginOutput(text);
-  const deep = extractDeepLoginUrl(normalized);
+  const deep = extractDeepLoginUrlFromBuffer(text);
   if (deep) return deep;
+  const normalized = stripTerminalAnsi(text).replace(/\r/g, '').replace(/\n+/g, ' ');
   const matches = normalized.match(GENERIC_HTTPS_PATTERN);
   if (!matches?.length) return null;
   let best = trimLoginUrlSuffix(matches[0]!);
@@ -129,7 +167,7 @@ function parseStatusJson(raw: string): CliAuthStatus | null {
       return { signedIn: false, accountLabel: null };
     }
   } catch {
-    // Текстовый вывод status.
+    // Не JSON — пробуем текстовый status.
   }
   return null;
 }
@@ -197,18 +235,24 @@ export async function queryCliAuthStatus(
   if (!resolveAgentBinary(env)) {
     return { signedIn: false, accountLabel: null };
   }
-  const result = await runAuthCommand(
+  const jsonResult = await runAuthCommand(
     ['status', '--format', 'json'],
     env,
     15_000,
   );
-  const merged = `${result.stdout}\n${result.stderr}`.trim();
-  if (merged) {
-    const parsed = parseStatusText(merged);
-    if (parsed.signedIn || result.code === 0) return parsed;
+  const jsonMerged = `${jsonResult.stdout}\n${jsonResult.stderr}`.trim();
+  if (jsonMerged) {
+    const fromJson = parseStatusJson(jsonMerged);
+    if (fromJson !== null) {
+      return fromJson;
+    }
   }
   const fallback = await runAuthCommand(['status'], env, 15_000);
-  return parseStatusText(`${fallback.stdout}\n${fallback.stderr}`);
+  const fallbackMerged = `${fallback.stdout}\n${fallback.stderr}`.trim();
+  if (!fallbackMerged) {
+    return { signedIn: false, accountLabel: null };
+  }
+  return parseStatusText(fallbackMerged);
 }
 
 export type CliLoginOutcome = {
@@ -222,31 +266,37 @@ export type CliLoginOutcome = {
 export async function runCliLogin(
   env: NodeJS.ProcessEnv = process.env,
   onUrl?: (url: string) => void,
+  onStatusCheck?: () => Promise<void>,
 ): Promise<CliLoginOutcome> {
   const loginEnv: NodeJS.ProcessEnv = { ...env, NO_OPEN_BROWSER: '1' };
   let streamBuffer = '';
   let bestUrl: string | null = null;
-  const result = await runAuthCommand(
-    ['login'],
-    loginEnv,
-    600_000,
-    (_stream, chunk) => {
-      streamBuffer += chunk;
-      bestUrl = trackLoginUrl(streamBuffer, bestUrl, onUrl);
-    },
-  );
+  const statusPoll = setInterval(() => {
+    void onStatusCheck?.().catch(() => undefined);
+  }, 2_000);
+  let result: { stdout: string; stderr: string; code: number | null };
+  try {
+    result = await runAuthCommand(
+      ['login'],
+      loginEnv,
+      600_000,
+      (_stream, chunk) => {
+        streamBuffer += chunk;
+        bestUrl = trackLoginUrl(streamBuffer, bestUrl, onUrl);
+      },
+    );
+  } finally {
+    clearInterval(statusPoll);
+  }
   const merged = `${streamBuffer}\n${result.stdout}\n${result.stderr}`;
   bestUrl = trackLoginUrl(merged, bestUrl, onUrl);
   const rawOutput = merged;
-  if (result.code === 0) {
-    if (!bestUrl) {
-      return {
-        ok: false,
-        message: CLI_LOGIN_NO_URL_MESSAGE,
-        loginUrl: null,
-        rawOutput,
-      };
-    }
+  const authStatus = await queryCliAuthStatus(env);
+
+  if (authStatus.signedIn && result.code === 0) {
+    return { ok: true, message: null, loginUrl: bestUrl, rawOutput };
+  }
+  if (authStatus.signedIn && result.code !== 0) {
     return { ok: true, message: null, loginUrl: bestUrl, rawOutput };
   }
   if (!bestUrl) {
@@ -257,10 +307,18 @@ export async function runCliLogin(
       rawOutput,
     };
   }
-  const detail = `${result.stdout}\n${result.stderr}`.trim();
+  if (result.code !== 0) {
+    const detail = `${result.stderr}\n${result.stdout}`.trim();
+    return {
+      ok: false,
+      message: detail || CLI_LOGIN_FAILED_MESSAGE,
+      loginUrl: bestUrl,
+      rawOutput,
+    };
+  }
   return {
     ok: false,
-    message: detail || CLI_LOGIN_FAILED_MESSAGE,
+    message: CLI_LOGIN_FAILED_MESSAGE,
     loginUrl: bestUrl,
     rawOutput,
   };
