@@ -76,4 +76,30 @@ describe('SettingsService CLI session', () => {
     expect(view.cliSessionSignedIn).toBe(true);
     expect(statusCalls).toBeGreaterThan(0);
   });
+
+  it('connectionView во время pending отдаёт success без кэша «не вошли»', async () => {
+    const url =
+      'https://cursor.com/loginDeepControl?challenge=x&uuid=11111111-2222-3333-4444-555555555555&mode=login&redirectTarget=cli';
+    setCliAuthExecForTests(async (input) => {
+      if (input.args[0] === 'login') {
+        input.onChunk?.('stdout', `${url}\n`);
+        await new Promise((r) => setTimeout(r, 500));
+        return { stdout: '', stderr: '', code: 0 };
+      }
+      if (input.args[0] === 'status') {
+        return {
+          stdout: 'Logged in as dev@example.com',
+          stderr: '',
+          code: 0,
+        };
+      }
+      return { stdout: '', stderr: '', code: 1 };
+    });
+    await settings.startCliLogin(process.env);
+    await new Promise((r) => setTimeout(r, 250));
+    const view = await settings.connectionView(process.env);
+    expect(view.cliLogin.status).toBe('success');
+    expect(view.cliSessionSignedIn).toBe(true);
+    expect(view.connected).toBe(true);
+  });
 });

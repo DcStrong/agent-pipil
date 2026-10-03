@@ -46,6 +46,8 @@ export class SettingsService implements OnModuleInit {
 
   private loginTask: Promise<void> | null = null;
 
+  private cliStatusPollInFlight: Promise<void> | null = null;
+
   constructor(private readonly store: StoreService) {}
 
   onModuleInit(): void {
@@ -77,7 +79,9 @@ export class SettingsService implements OnModuleInit {
 
   async connectionView(env: NodeJS.ProcessEnv = process.env): Promise<CursorConnection> {
     const sessionCacheMs = this.cliLoginState.status === 'pending' ? 0 : 5_000;
-    await this.ensureCliAuthChecked(env, sessionCacheMs);
+    const statusTimeoutMs = this.cliLoginState.status === 'pending' ? 2_000 : undefined;
+    await this.ensureCliAuthChecked(env, sessionCacheMs, statusTimeoutMs);
+    this.markCliLoginSuccessIfSignedIn();
     return this.buildConnection(env);
   }
 
@@ -161,6 +165,7 @@ export class SettingsService implements OnModuleInit {
   async ensureCliAuthChecked(
     env: NodeJS.ProcessEnv = process.env,
     maxAgeMs = 30_000,
+    statusTimeoutMs?: number,
   ): Promise<void> {
     if (this.connectionMode() !== 'cli') return;
     if (!isAgentCliAvailable(env)) {
@@ -170,7 +175,9 @@ export class SettingsService implements OnModuleInit {
     if (maxAgeMs > 0 && Date.now() - this.cliSession.checkedAt < maxAgeMs) {
       return;
     }
-    const status = await queryCliAuthStatus(env);
+    const status = await queryCliAuthStatus(env, {
+      timeoutMs: statusTimeoutMs ?? 15_000,
+    });
     this.cliSession = {
       signedIn: status.signedIn,
       accountLabel: status.accountLabel,
@@ -294,7 +301,20 @@ export class SettingsService implements OnModuleInit {
 
   private async pollCliSessionDuringLogin(env: NodeJS.ProcessEnv): Promise<void> {
     if (this.cliLoginState.status !== 'pending') return;
-    await this.ensureCliAuthChecked(env, 0);
+    if (this.cliStatusPollInFlight) return;
+    this.cliStatusPollInFlight = this.runCliStatusPoll(env).finally(() => {
+      this.cliStatusPollInFlight = null;
+    });
+    await this.cliStatusPollInFlight;
+  }
+
+  private async runCliStatusPoll(env: NodeJS.ProcessEnv): Promise<void> {
+    if (this.cliLoginState.status !== 'pending') return;
+    try {
+      await this.ensureCliAuthChecked(env, 0, 2_000);
+    } catch {
+      return;
+    }
     this.markCliLoginSuccessIfSignedIn();
   }
 

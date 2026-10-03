@@ -1,6 +1,7 @@
 /** Токен и ключ Cursor остаются на сервере. В браузер возвращается только маска. */
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { api, messageOf } from '../api'
+import { navigateLoginTab, openBlankLoginTab } from '../cursor-cli-login-tab'
 import { useLive } from '../live'
 import type { CursorConnectionMode } from '../types'
 
@@ -11,6 +12,8 @@ export function SettingsPage() {
   const [note, setNote] = useState<string | null>(null)
   const mode: CursorConnectionMode = cursor?.mode ?? 'cli'
   const loginPending = mode === 'cli' && cursor?.cliLogin.status === 'pending'
+  const loginTabRef = useRef<Window | null>(null)
+  const openedLoginUrlRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!loginPending) return
@@ -19,6 +22,16 @@ export function SettingsPage() {
     }, 2000)
     return () => window.clearInterval(timer)
   }, [loginPending, reload])
+
+  const loginUrl = cursor?.cliLogin.loginUrl ?? null
+
+  useEffect(() => {
+    if (!loginPending || !loginUrl) return
+    const result = navigateLoginTab(loginTabRef.current, loginUrl, openedLoginUrlRef.current)
+    if (result === 'navigated') {
+      openedLoginUrlRef.current = loginUrl
+    }
+  }, [loginPending, loginUrl])
 
   async function save(event: FormEvent) {
     event.preventDefault()
@@ -50,17 +63,38 @@ export function SettingsPage() {
   async function startCliLogin() {
     setError(null)
     setNote(null)
+    openedLoginUrlRef.current = null
+    const loginTab = openBlankLoginTab()
+    loginTabRef.current = loginTab
+    const popupBlocked = loginTab === null
     try {
       const next = await api.startCursorCliLogin()
       await reload()
-      if (next.cliLogin.loginUrl) {
+      const url = next.cliLogin.loginUrl
+      if (url) {
+        const nav = navigateLoginTab(loginTabRef.current, url, openedLoginUrlRef.current)
+        if (nav === 'navigated') {
+          openedLoginUrlRef.current = url
+          setNote('Открыта вкладка Cursor для входа на этой машине.')
+        } else if (popupBlocked) {
+          setNote(
+            'Браузер не дал открыть вкладку автоматически. Откройте ссылку ниже вручную на той же машине, где работает backend.',
+          )
+        } else {
+          setNote(
+            'Откройте ссылку ниже в этом браузере на той же машине, где работает backend. Не используйте старую вкладку.',
+          )
+        }
+      } else if (popupBlocked) {
         setNote(
-          'Откройте ссылку ниже в этом браузере на той же машине, где работает backend. Не используйте старую вкладку.',
+          (next.cliLogin.message ?? 'Запущен вход через CLI…') +
+            ' Браузер не дал открыть вкладку — когда появится ссылка, откройте её вручную.',
         )
       } else {
         setNote(next.cliLogin.message ?? 'Запущен вход через CLI…')
       }
     } catch (reason) {
+      loginTabRef.current = null
       setError(messageOf(reason))
     }
   }
@@ -121,13 +155,11 @@ export function SettingsPage() {
   const secretPlaceholder = mode === 'cli' ? 'Ключ для CI или без интерактивного входа' : 'Вставьте токен'
 
   const loginMessage =
-    cursor?.cliLogin.status === 'pending'
+    cursor?.cliLogin.status === 'pending' ||
+    cursor?.cliLogin.status === 'failed' ||
+    cursor?.cliLogin.status === 'success'
       ? cursor.cliLogin.message
-      : cursor?.cliLogin.status === 'failed'
-        ? cursor.cliLogin.message
-        : null
-
-  const loginUrl = cursor?.cliLogin.loginUrl ?? null
+      : null
 
   return (
     <div className="page narrow">
