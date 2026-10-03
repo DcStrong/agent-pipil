@@ -1,4 +1,12 @@
 import {
+  AGENT_STATUS_JSON_AUTHENTICATED,
+  AGENT_STATUS_JSON_LOGGED_IN_SNAKE,
+  AGENT_STATUS_JSON_STATUS_STRING,
+  AGENT_STATUS_JSON_UNKNOWN,
+  AGENT_STATUS_TEXT_LOGGED_IN,
+  AGENT_STATUS_TEXT_WHOAMI,
+} from './agent-status-fixtures';
+import {
   CLI_LOGIN_NO_URL_MESSAGE,
   extractDeepLoginUrlFromBuffer,
   extractLoginUrl,
@@ -46,13 +54,49 @@ describe('cursor-cli-auth', () => {
   });
 
   it('parseStatusText понимает json и текст', () => {
-    expect(parseStatusText('{"authenticated":true,"email":"dev@example.com"}')).toEqual({
+    expect(parseStatusText(AGENT_STATUS_JSON_AUTHENTICATED)).toEqual({
       signedIn: true,
       accountLabel: 'dev@example.com',
+    });
+    expect(parseStatusText(AGENT_STATUS_TEXT_LOGGED_IN)).toEqual({
+      signedIn: true,
+      accountLabel: 'dev@example.com',
+    });
+    expect(parseStatusText(AGENT_STATUS_JSON_LOGGED_IN_SNAKE)).toEqual({
+      signedIn: true,
+      accountLabel: 'dev@example.com',
+    });
+    expect(parseStatusText(AGENT_STATUS_JSON_STATUS_STRING)).toEqual({
+      signedIn: true,
+      accountLabel: 'dev@example.com',
+    });
+    expect(parseStatusText(AGENT_STATUS_JSON_UNKNOWN)).toEqual({
+      signedIn: false,
+      accountLabel: null,
     });
     expect(parseStatusText('Not authenticated')).toEqual({
       signedIn: false,
       accountLabel: null,
+    });
+    expect(parseStatusText('Вошли как user@corp.dev')).toEqual({
+      signedIn: true,
+      accountLabel: 'user@corp.dev',
+    });
+  });
+
+  it('queryCliAuthStatus понимает текстовый whoami-вывод CLI', async () => {
+    setCliAuthExecForTests(async (input) => {
+      if (input.args[0] !== 'status') {
+        return { stdout: '', stderr: '', code: 1 };
+      }
+      if (input.args.includes('--format')) {
+        return { stdout: AGENT_STATUS_JSON_UNKNOWN, stderr: '', code: 0 };
+      }
+      return { stdout: AGENT_STATUS_TEXT_WHOAMI, stderr: '', code: 0 };
+    });
+    await expect(queryCliAuthStatus()).resolves.toEqual({
+      signedIn: true,
+      accountLabel: 'cli@test.dev',
     });
   });
 

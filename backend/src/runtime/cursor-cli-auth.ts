@@ -137,35 +137,135 @@ export function extractLoginUrl(text: string): string | null {
   return best.length > 0 ? best : null;
 }
 
-function parseStatusJson(raw: string): CliAuthStatus | null {
-  try {
-    const value = JSON.parse(raw) as Record<string, unknown>;
-    const signedIn =
-      value.authenticated === true ||
-      value.isAuthenticated === true ||
-      value.loggedIn === true;
-    const email =
-      typeof value.email === 'string'
-        ? value.email
-        : typeof value.user === 'object' &&
-            value.user !== null &&
-            typeof (value.user as { email?: unknown }).email === 'string'
-          ? ((value.user as { email: string }).email ?? null)
-          : typeof value.account === 'object' &&
-              value.account !== null &&
-              typeof (value.account as { email?: unknown }).email === 'string'
-            ? ((value.account as { email: string }).email ?? null)
-            : null;
-    if (signedIn) {
-      return { signedIn: true, accountLabel: email };
+function extractJsonPayload(raw: string): string {
+  const cleaned = stripTerminalAnsi(raw).trim();
+  if (!cleaned) return cleaned;
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    return cleaned.slice(start, end + 1);
+  }
+  return cleaned;
+}
+
+function isTruthyAuthFlag(value: unknown): boolean {
+  if (value === true || value === 1) return true;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return (
+      normalized === 'true' ||
+      normalized === 'yes' ||
+      normalized === 'authenticated' ||
+      normalized === 'logged_in' ||
+      normalized === 'logged-in' ||
+      normalized === 'signed_in'
+    );
+  }
+  return false;
+}
+
+function isFalsyAuthFlag(value: unknown): boolean {
+  if (value === false || value === 0) return true;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized === 'false' || normalized === 'no' || normalized === 'none';
+  }
+  return false;
+}
+
+function readAccountLabel(value: Record<string, unknown>): string | null {
+  const directKeys = ['email', 'userEmail', 'user_email', 'accountEmail', 'account_email'];
+  for (const key of directKeys) {
+    const candidate = value[key];
+    if (typeof candidate === 'string' && candidate.includes('@')) {
+      return candidate;
     }
-    if (
-      value.authenticated === false ||
-      value.isAuthenticated === false ||
-      value.loggedIn === false
-    ) {
+  }
+  for (const key of ['user', 'account', 'profile']) {
+    const nested = value[key];
+    if (typeof nested === 'object' && nested !== null) {
+      const fromNested = readAccountLabel(nested as Record<string, unknown>);
+      if (fromNested) return fromNested;
+    }
+  }
+  if (typeof value.name === 'string' && value.name.includes('@')) {
+    return value.name;
+  }
+  return null;
+}
+
+const AUTH_BOOLEAN_KEYS = [
+  'authenticated',
+  'isAuthenticated',
+  'loggedIn',
+  'logged_in',
+  'isLoggedIn',
+  'signedIn',
+  'signed_in',
+  'isSignedIn',
+] as const;
+
+function readAuthStatusString(value: string): CliAuthStatus | null {
+  const lower = value.toLowerCase();
+  if (
+    lower.includes('not authenticated') ||
+    lower.includes('not logged') ||
+    lower.includes('unauthenticated') ||
+    lower.includes('signed out')
+  ) {
+    return { signedIn: false, accountLabel: null };
+  }
+  if (
+    lower.includes('logged in') ||
+    lower.includes('logged-in') ||
+    lower.includes('logged_in') ||
+    lower.includes('authenticated') ||
+    lower.includes('signed in')
+  ) {
+    return { signedIn: true, accountLabel: null };
+  }
+  return null;
+}
+
+function parseStatusObject(value: Record<string, unknown>): CliAuthStatus | null {
+  for (const key of AUTH_BOOLEAN_KEYS) {
+    if (!(key in value)) continue;
+    const flag = value[key];
+    if (isTruthyAuthFlag(flag)) {
+      return { signedIn: true, accountLabel: readAccountLabel(value) };
+    }
+    if (isFalsyAuthFlag(flag)) {
       return { signedIn: false, accountLabel: null };
     }
+  }
+  for (const key of ['status', 'authStatus', 'auth_status', 'loginStatus', 'login_status']) {
+    const statusValue = value[key];
+    if (typeof statusValue === 'string') {
+      const fromStatus = readAuthStatusString(statusValue);
+      if (fromStatus) {
+        return {
+          signedIn: fromStatus.signedIn,
+          accountLabel: fromStatus.accountLabel ?? readAccountLabel(value),
+        };
+      }
+    }
+  }
+  if (typeof value.auth === 'object' && value.auth !== null) {
+    const nested = parseStatusObject(value.auth as Record<string, unknown>);
+    if (nested) {
+      return {
+        signedIn: nested.signedIn,
+        accountLabel: nested.accountLabel ?? readAccountLabel(value),
+      };
+    }
+  }
+  return null;
+}
+
+function parseStatusJson(raw: string): CliAuthStatus | null {
+  try {
+    const value = JSON.parse(extractJsonPayload(raw)) as Record<string, unknown>;
+    return parseStatusObject(value);
   } catch {
     // Не JSON — пробуем текстовый status.
   }
@@ -173,21 +273,27 @@ function parseStatusJson(raw: string): CliAuthStatus | null {
 }
 
 export function parseStatusText(text: string): CliAuthStatus {
-  const json = parseStatusJson(text.trim());
+  const cleaned = stripTerminalAnsi(text).trim();
+  const json = parseStatusJson(cleaned);
   if (json) return json;
-  const lower = text.toLowerCase();
+  const lower = cleaned.toLowerCase();
   if (
     lower.includes('not authenticated') ||
     lower.includes('not logged in') ||
-    lower.includes('не авториз')
+    lower.includes('not logged') ||
+    lower.includes('не авториз') ||
+    lower.includes('не вошли')
   ) {
     return { signedIn: false, accountLabel: null };
   }
-  const emailMatch = text.match(/[\w.+-]+@[\w.-]+\.\w+/);
+  const emailMatch = cleaned.match(/[\w.+-]+@[\w.-]+\.\w+/);
   if (
     lower.includes('authenticated') ||
     lower.includes('logged in') ||
-    emailMatch
+    lower.includes('logged-in') ||
+    lower.includes('logged_in') ||
+    lower.includes('вошли') ||
+    (emailMatch && (lower.includes(' as ') || lower.includes(' как ')))
   ) {
     return { signedIn: true, accountLabel: emailMatch?.[0] ?? null };
   }
@@ -229,16 +335,25 @@ function trackLoginUrl(
   return bestUrl;
 }
 
+export type QueryCliAuthStatusOptions = {
+  /** Общий бюджет ожидания status (мс). По умолчанию 15 с. */
+  timeoutMs?: number;
+};
+
 export async function queryCliAuthStatus(
   env: NodeJS.ProcessEnv = process.env,
+  options: QueryCliAuthStatusOptions = {},
 ): Promise<CliAuthStatus> {
   if (!resolveAgentBinary(env)) {
     return { signedIn: false, accountLabel: null };
   }
+  const totalMs = options.timeoutMs ?? 15_000;
+  const jsonTimeoutMs = Math.max(500, Math.floor(totalMs * 0.55));
+  const textTimeoutMs = Math.max(500, totalMs - jsonTimeoutMs);
   const jsonResult = await runAuthCommand(
     ['status', '--format', 'json'],
     env,
-    15_000,
+    jsonTimeoutMs,
   );
   const jsonMerged = `${jsonResult.stdout}\n${jsonResult.stderr}`.trim();
   if (jsonMerged) {
@@ -247,7 +362,7 @@ export async function queryCliAuthStatus(
       return fromJson;
     }
   }
-  const fallback = await runAuthCommand(['status'], env, 15_000);
+  const fallback = await runAuthCommand(['status'], env, textTimeoutMs);
   const fallbackMerged = `${fallback.stdout}\n${fallback.stderr}`.trim();
   if (!fallbackMerged) {
     return { signedIn: false, accountLabel: null };
