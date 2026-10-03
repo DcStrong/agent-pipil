@@ -37,6 +37,8 @@ interface LiveValue {
   removeProject: (id: string) => void
   upsertRun: (run: Run) => void
   upsertTask: (task: BoardTask) => void
+  removeTask: (id: string) => void
+  removeRun: (id: string) => void
   /** Кладёт процесс в уже открытый список, без повторной загрузки всей страницы. */
   upsertWorkflow: (workflow: Workflow) => void
   removeWorkflow: (id: string) => void
@@ -99,6 +101,14 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       const rest = list.filter((item) => item.id !== task.id)
       return [...rest, task].sort((left, right) => right.createdAt.localeCompare(left.createdAt))
     })
+  }, [])
+
+  const removeTask = useCallback((id: string) => {
+    setTasks((list) => list.filter((item) => item.id !== id))
+  }, [])
+
+  const removeRun = useCallback((id: string) => {
+    setRuns((list) => list.filter((item) => item.id !== id))
   }, [])
 
   const upsertWorkflow = useCallback((workflow: Workflow) => {
@@ -200,6 +210,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       reload,
       upsertRun,
       upsertTask,
+      removeTask,
+      removeRun,
       upsertWorkflow,
       removeWorkflow,
       upsertPreset,
@@ -221,6 +233,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       reload,
       upsertRun,
       upsertTask,
+      removeTask,
+      removeRun,
       upsertWorkflow,
       removeWorkflow,
       upsertPreset,

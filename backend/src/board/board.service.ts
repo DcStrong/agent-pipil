@@ -72,6 +72,27 @@ export class BoardService implements OnModuleInit, OnModuleDestroy {
     return this.must(id);
   }
 
+  /** Убирает задачу и все запуски, которые к ней относятся. */
+  remove(id: string): void {
+    const task = this.must(id);
+    const timer = this.timers.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      this.timers.delete(id);
+    }
+    const runIds = this.runs.runIdsForBoardTask(task.id, task.runId);
+    for (const runId of runIds) {
+      try {
+        this.runs.remove(runId);
+      } catch (error) {
+        if (!(error instanceof NotFoundException)) throw error;
+      }
+    }
+    this.store.mutate((state) => {
+      state.tasks = state.tasks.filter((item) => item.id !== id);
+    });
+  }
+
   create(
     title: string,
     description: string,
@@ -358,6 +379,7 @@ export class BoardService implements OnModuleInit, OnModuleDestroy {
       const run = this.runs.start(workflowId, text, {
         projectId,
         roleIds,
+        boardTaskId: task.id,
       });
       return run.id;
     } catch (error) {

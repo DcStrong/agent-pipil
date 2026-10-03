@@ -104,6 +104,7 @@ describe('RunsService', () => {
     runs: RunsService;
     settings: SettingsService;
     workflows: WorkflowsService;
+    store: StoreService;
     projectId: string;
   }> {
     directory = await mkdtemp(join(tmpdir(), 'pipil-'));
@@ -128,9 +129,57 @@ describe('RunsService', () => {
       runs: moduleRef.get(RunsService),
       settings,
       workflows: moduleRef.get(WorkflowsService),
+      store,
       projectId,
     };
   }
+
+  it('удаление одного запуска оставляет задачу доски и соседние запуски', async () => {
+    const { runs, store, projectId } = await make();
+    const taskId = randomUUID();
+    store.mutate((state) => {
+      state.tasks.push({
+        id: taskId,
+        title: 'На доске',
+        description: 'Текст',
+        status: 'in_progress',
+        projectId,
+        projectLabel: 'run-proj',
+        workflowId: null,
+        workflowName: null,
+        runId: null,
+        team: [{ agentId: 'role_analyst', mode: 'ask' }],
+        phase: 'done',
+        activity: [],
+        plan: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    });
+    const first = runs.start('workflow_supervised', 'Первый запуск', {
+      projectId,
+      boardTaskId: taskId,
+    });
+    await until(runs, first.id, 'waiting_approval');
+    runs.decide(first.id, false);
+    await settle();
+    const second = runs.start('workflow_supervised', 'Второй запуск', {
+      projectId,
+      boardTaskId: taskId,
+    });
+    await until(runs, second.id, 'waiting_approval');
+    store.mutate((state) => {
+      const task = state.tasks.find((item) => item.id === taskId);
+      if (task) task.runId = second.id;
+    });
+    runs.remove(first.id);
+    expect(() => runs.get(first.id)).toThrow(/не найден/i);
+    expect(runs.get(second.id).id).toBe(second.id);
+    const task = store.read().tasks.find((item) => item.id === taskId);
+    expect(task?.title).toBe('На доске');
+    expect(task?.runId).toBe(second.id);
+    expect(store.read().runs.map((item) => item.id)).toEqual([second.id]);
+  });
 
   it('останавливается на проверке и после подтверждения отдаёт итог', async () => {
     const { runs, projectId } = await make();

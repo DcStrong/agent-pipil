@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Post,
@@ -151,5 +152,11 @@ export class RunsController {
       throw new BadRequestException('Решение: approve или reject.');
     }
     return this.runs.decide(id, decision === 'approve');
+  }
+
+  @Delete(':id')
+  remove(@Param('id') id: string): { ok: true } {
+    this.runs.remove(id);
+    return { ok: true };
   }
 }

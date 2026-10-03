@@ -206,6 +206,8 @@ export interface Run {
   /** Папка задачи в проекте. Без папки проекта части лежат на самой задаче. */
   taskFolder: string | null;
   archive: TaskArchive | null;
+  /** Задача доски, из которой стартовал запуск. Старые записи могут не иметь поля. */
+  boardTaskId: string | null;
 }
 
 export type SavedProjectKind = 'folder' | 'workspace';
@@ -1055,6 +1057,12 @@ function parseRun(value: unknown): Run {
     reviewText: typeof value.reviewText === 'string' ? value.reviewText : null,
     taskFolder: typeof value.taskFolder === 'string' ? value.taskFolder : null,
     archive: value.archive === undefined ? null : parseArchive(value.archive),
+    boardTaskId:
+      value.boardTaskId === null ||
+      value.boardTaskId === undefined ||
+      value.boardTaskId === ''
+        ? null
+        : text(value.boardTaskId, 'задача доски запуска'),
   };
 }
 

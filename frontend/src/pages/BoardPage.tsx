@@ -14,8 +14,19 @@ const COLUMNS: BoardStatus[] = ['new', 'in_progress', 'review']
 type PickedAgent = { agentId: string; mode: WorkMode }
 
 export function BoardPage() {
-  const { ready, error: loadError, agents, workflows, projects, tasks, upsertTask, upsertProject } =
-    useLive()
+  const {
+    ready,
+    error: loadError,
+    agents,
+    workflows,
+    projects,
+    tasks,
+    runs,
+    upsertTask,
+    upsertProject,
+    removeTask,
+    removeRun,
+  } = useLive()
   const [creating, setCreating] = useState(false)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
@@ -126,6 +137,28 @@ export function BoardPage() {
     setError(null)
     try {
       upsertTask(await api.moveTask(id, status))
+    } catch (reason) {
+      setError(messageOf(reason))
+    }
+  }
+
+  async function dropTask(task: BoardTask) {
+    if (
+      !window.confirm(
+        `Удалить задачу «${task.title}» и все её запуски? Это нельзя отменить.`,
+      )
+    ) {
+      return
+    }
+    setError(null)
+    try {
+      await api.deleteTask(task.id)
+      removeTask(task.id)
+      for (const run of runs) {
+        if (run.id === task.runId || run.boardTaskId === task.id) {
+          removeRun(run.id)
+        }
+      }
     } catch (reason) {
       setError(messageOf(reason))
     }
@@ -410,6 +443,7 @@ export function BoardPage() {
                     task={task}
                     names={agentMap}
                     onMove={(next) => void move(task.id, next)}
+                    onDelete={() => void dropTask(task)}
                   />
                 ))}
               </div>
@@ -431,10 +465,12 @@ function TaskCard({
   task,
   names,
   onMove,
+  onDelete,
 }: {
   task: BoardTask
   names: Map<string, Agent>
   onMove: (status: BoardStatus) => void
+  onDelete: () => void
 }) {
   const skipClick = useRef(false)
   const [openHint, setOpenHint] = useState<string | null>(null)
@@ -530,6 +566,9 @@ function TaskCard({
             Открыть план
           </a>
         ) : null}
+        <button type="button" className="text-btn danger" data-testid="delete-task" onClick={onDelete}>
+          Удалить
+        </button>
       </div>
     </article>
   )

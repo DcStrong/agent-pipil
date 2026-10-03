@@ -186,6 +186,7 @@ export interface Run {
   reviewText: string | null
   taskFolder: string | null
   archive: TaskArchive | null
+  boardTaskId?: string | null
 }
 
 export type CursorFileKind = 'rule' | 'skill' | 'mcp'
