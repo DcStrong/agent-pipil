@@ -31,6 +31,7 @@ import {
   writeTaskPieces,
   type PieceMode,
 } from './task-order';
+import { recordCursorStepUsage } from './cursor-usage';
 
 export function readDelayMs(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env.SIM_DELAY_MS;
@@ -414,6 +415,17 @@ export class Orchestrator {
         message: `${via} ответил на «${step.title}».${link}`,
         stepIndex: index,
       });
+      if (cursorResult.usageCapture) {
+        recordCursorStepUsage(
+          run,
+          {
+            stepId: step.stepId,
+            title: step.title,
+            agentName: step.agentName,
+          },
+          cursorResult.usageCapture,
+        );
+      }
       tell();
       first = {
         text: cursorResult.text,

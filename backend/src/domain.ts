@@ -166,6 +166,28 @@ export interface StepWork {
   finishedAt: string;
 }
 
+export interface TaskUsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  chargedCents: number | null;
+}
+
+export interface RunUsageState {
+  known: boolean;
+  totals: TaskUsageTotals | null;
+}
+
+export interface RunCursorUsageStep {
+  stepId: string;
+  title: string;
+  agentName: string;
+  totals: TaskUsageTotals | null;
+  sources: Array<'run.usage' | 'agent.getUsage' | 'cli-output'>;
+}
+
 export interface RunEvent {
   id: string;
   at: string;
@@ -206,6 +228,8 @@ export interface Run {
   /** Папка задачи в проекте. Без папки проекта части лежат на самой задаче. */
   taskFolder: string | null;
   archive: TaskArchive | null;
+  usage?: RunUsageState;
+  usageSteps?: RunCursorUsageStep[];
 }
 
 export type SavedProjectKind = 'folder' | 'workspace';
@@ -935,6 +959,63 @@ function parseRunStep(value: unknown): RunStep {
   };
 }
 
+function parseNumber(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) fail(label);
+  return value;
+}
+
+function parseUsageTotalsFixed(value: unknown): TaskUsageTotals | null {
+  if (value == null) return null;
+  if (!isRecord(value)) fail('расход задачи');
+  const charged = value.chargedCents;
+  if (charged !== null && charged !== undefined && typeof charged !== 'number') {
+    fail('стоимость расхода');
+  }
+  return {
+    inputTokens: parseNumber(value.inputTokens, 'входные токены'),
+    outputTokens: parseNumber(value.outputTokens, 'выходные токены'),
+    cacheReadTokens: parseNumber(value.cacheReadTokens, 'кэш чтение'),
+    cacheWriteTokens: parseNumber(value.cacheWriteTokens, 'кэш запись'),
+    totalTokens: parseNumber(value.totalTokens, 'всего токенов'),
+    chargedCents:
+      charged === undefined || charged === null ? null : charged,
+  };
+}
+
+function parseRunUsageState(value: unknown): RunUsageState | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) fail('сводка расхода');
+  if (typeof value.known !== 'boolean') fail('признак расхода');
+  const totals =
+    value.totals === undefined || value.totals === null
+      ? null
+      : parseUsageTotalsFixed(value.totals);
+  return { known: value.known, totals };
+}
+
+function parseRunUsageStep(value: unknown): RunCursorUsageStep {
+  if (!isRecord(value)) fail('расход шага');
+  const sources = Array.isArray(value.sources)
+    ? value.sources.filter(
+        (item): item is RunCursorUsageStep['sources'][number] =>
+          item === 'run.usage' ||
+          item === 'agent.getUsage' ||
+          item === 'cli-output',
+      )
+    : [];
+  const totals =
+    value.totals === undefined || value.totals === null
+      ? null
+      : parseUsageTotalsFixed(value.totals);
+  return {
+    stepId: text(value.stepId, 'шаг расхода'),
+    title: text(value.title, 'название расхода'),
+    agentName: text(value.agentName, 'агент расхода'),
+    totals,
+    sources,
+  };
+}
+
 function parseWork(value: unknown): StepWork {
   if (!isRecord(value)) fail('результат шага');
   return {
@@ -1055,6 +1136,10 @@ function parseRun(value: unknown): Run {
     reviewText: typeof value.reviewText === 'string' ? value.reviewText : null,
     taskFolder: typeof value.taskFolder === 'string' ? value.taskFolder : null,
     archive: value.archive === undefined ? null : parseArchive(value.archive),
+    usage: parseRunUsageState(value.usage),
+    usageSteps: Array.isArray(value.usageSteps)
+      ? value.usageSteps.map(parseRunUsageStep)
+      : undefined,
   };
 }
 

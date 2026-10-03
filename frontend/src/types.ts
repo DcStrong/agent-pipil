@@ -133,6 +133,20 @@ export interface StepWork {
   finishedAt: string
 }
 
+export interface TaskUsageTotals {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  totalTokens: number
+  chargedCents: number | null
+}
+
+export interface RunUsageState {
+  known: boolean
+  totals: TaskUsageTotals | null
+}
+
 export interface RunEvent {
   id: string
   at: string
@@ -186,6 +200,7 @@ export interface Run {
   reviewText: string | null
   taskFolder: string | null
   archive: TaskArchive | null
+  usage?: RunUsageState
 }
 
 export type CursorFileKind = 'rule' | 'skill' | 'mcp'
@@ -300,6 +315,7 @@ export interface BoardTask {
   phase: BoardPhase
   activity: BoardActivity[]
   plan: BoardPlan | null
+  usage?: RunUsageState
   createdAt: string
   updatedAt: string
 }

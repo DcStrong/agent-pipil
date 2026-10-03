@@ -37,6 +37,20 @@ export interface BoardPlan {
   updatedAt: string;
 }
 
+export interface TaskUsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  chargedCents: number | null;
+}
+
+export interface RunUsageState {
+  known: boolean;
+  totals: TaskUsageTotals | null;
+}
+
 export interface BoardTask {
   id: string;
   title: string;
@@ -54,6 +68,8 @@ export interface BoardTask {
   phase: BoardPhase;
   activity: BoardActivity[];
   plan: BoardPlan | null;
+  /** Копия расхода связанного запуска; обновляется backend. */
+  usage?: RunUsageState;
   createdAt: string;
   updatedAt: string;
 }
@@ -179,6 +195,40 @@ function parseActivity(value: unknown): BoardActivity {
   };
 }
 
+function parseNumber(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) fail(label);
+  return value;
+}
+
+function parseUsageTotals(value: unknown): TaskUsageTotals | null {
+  if (value == null) return null;
+  if (!isRecord(value)) fail('расход задачи');
+  const charged = value.chargedCents;
+  if (charged !== null && charged !== undefined && typeof charged !== 'number') {
+    fail('стоимость расхода');
+  }
+  return {
+    inputTokens: parseNumber(value.inputTokens, 'входные токены'),
+    outputTokens: parseNumber(value.outputTokens, 'выходные токены'),
+    cacheReadTokens: parseNumber(value.cacheReadTokens, 'кэш чтение'),
+    cacheWriteTokens: parseNumber(value.cacheWriteTokens, 'кэш запись'),
+    totalTokens: parseNumber(value.totalTokens, 'всего токенов'),
+    chargedCents:
+      charged === undefined || charged === null ? null : charged,
+  };
+}
+
+function parseRunUsageState(value: unknown): RunUsageState | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) fail('сводка расхода');
+  if (typeof value.known !== 'boolean') fail('признак расхода');
+  const totals =
+    value.totals === undefined || value.totals === null
+      ? null
+      : parseUsageTotals(value.totals);
+  return { known: value.known, totals };
+}
+
 function parsePlan(value: unknown): BoardPlan | null {
   if (value == null) return null;
   if (!isRecord(value)) fail('план');
@@ -224,6 +274,7 @@ function parseTask(value: unknown): BoardTask {
       ? value.activity.map(parseActivity)
       : [],
     plan: parsePlan(value.plan),
+    usage: parseRunUsageState(value.usage),
     createdAt: text(value.createdAt, 'создание задачи'),
     updatedAt: text(value.updatedAt, 'обновление задачи'),
   };

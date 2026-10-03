@@ -144,6 +144,7 @@ export class RunsService {
         run,
         (published) => {
           this.store.upsertRun(published);
+          this.syncBoardTaskUsage(published);
           this.updates.next({ type: 'run', run: published });
         },
         {
@@ -270,7 +271,19 @@ export class RunsService {
   private publishLive(run: Run): void {
     const snapshot = structuredClone(run);
     this.store.upsertRun(snapshot);
+    this.syncBoardTaskUsage(snapshot);
     this.updates.next({ type: 'run', run: snapshot });
+  }
+
+  /** Копирует расход запуска на карточку задачи доски. */
+  private syncBoardTaskUsage(run: Run): void {
+    if (!run.usage) return;
+    this.store.mutate((state) => {
+      const task = state.tasks.find((item) => item.runId === run.id);
+      if (!task) return;
+      task.usage = structuredClone(run.usage);
+      task.updatedAt = new Date().toISOString();
+    });
   }
 
   private isOpenStatus(status: Run['status']): boolean {
