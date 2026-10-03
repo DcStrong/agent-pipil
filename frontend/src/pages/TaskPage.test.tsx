@@ -24,6 +24,18 @@ vi.mock('../api', () => ({
   messageOf: (error: unknown) => (error instanceof Error ? error.message : 'ошибка'),
 }))
 
+const usageKnown = {
+  known: true,
+  totals: {
+    inputTokens: 1200,
+    outputTokens: 800,
+    cacheReadTokens: 100,
+    cacheWriteTokens: 50,
+    totalTokens: 2150,
+    chargedCents: 33,
+  },
+}
+
 const reviewTask: BoardTask = {
   id: 't1',
   title: 'Сводка',
@@ -97,6 +109,24 @@ afterEach(() => {
 })
 
 describe('TaskPage — проверка', () => {
+  it('показывает токены и стоимость, когда usage известен', () => {
+    harness.live = {
+      ...liveState(),
+      runs: [{ ...run, usage: usageKnown }],
+    }
+    render(<TaskPage taskId="t1" />)
+    expect(screen.getByTestId('usage-total').textContent?.replace(/\s/g, '')).toContain('2150')
+    expect(screen.getByTestId('usage-cost').textContent).toContain('0.33')
+    expect(screen.queryByTestId('usage-unknown')).toBeNull()
+  })
+
+  it('пишет «неизвестен», когда usage нет', () => {
+    harness.live = liveState()
+    render(<TaskPage taskId="t1" />)
+    expect(screen.getByTestId('usage-unknown').textContent).toContain('неизвестен')
+    expect(screen.queryByTestId('usage-total')).toBeNull()
+  })
+
   it('показывает сводки агентов и действия', () => {
     harness.live = liveState()
     render(<TaskPage taskId="t1" />)

@@ -10,6 +10,7 @@ import {
   type CursorStepResult,
 } from './cursor-client';
 import { spawnAgentProcess } from './cursor-cli-spawn';
+import { fetchCliCursorStepUsage } from './cursor-sdk-usage';
 
 export const CURSOR_CLI_MISSING_AUTH_MESSAGE =
   'Нельзя выполнить шаг Cursor: нет входа в CLI и не задан CURSOR_API_KEY. Нажмите «Войти через Cursor» в настройках или сохраните ключ.';
@@ -179,10 +180,16 @@ export async function runCursorCliStep(
   if (!text) {
     throw new Error('Cursor CLI не вернул текст ответа для шага.');
   }
+  const usageCapture = await fetchCliCursorStepUsage(
+    result.stdout,
+    result.stderr,
+    spawnEnv.CURSOR_API_KEY ?? cliApiKey,
+  );
   return {
     agentId: 'local-cli',
     runId: 'local-cli',
     text,
     agentUrl: null,
+    usageCapture,
   };
 }
