@@ -7,6 +7,7 @@ import { ProjectPathInput } from '../components/ProjectPathInput'
 import { IconPlus } from '../components/Icons'
 import { useLive } from '../live'
 import { href } from '../route'
+import { formatTaskUsageBrief, taskUsageKnown } from '../task-usage'
 import type { Agent, BoardStatus, BoardTask, SavedProjectKind, WorkMode, Workflow } from '../types'
 
 const COLUMNS: BoardStatus[] = ['new', 'in_progress', 'review']
@@ -494,6 +495,11 @@ function TaskCard({
         <p className="hint" data-testid="task-card-project">
           Проект: {task.projectLabel}
           {task.workflowName ? ` · процесс «${task.workflowName}»` : ''}
+        </p>
+      ) : null}
+      {task.runId ? (
+        <p className="hint task-card-usage" data-testid="task-card-usage">
+          Расход: {taskUsageKnown(task.usage) ? formatTaskUsageBrief(task.usage) : formatTaskUsageBrief(undefined)}
         </p>
       ) : null}
       <ul className="member-list">

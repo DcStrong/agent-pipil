@@ -1,4 +1,9 @@
 import { CursorClient } from './cursor-client';
+import { setCursorSdkUsageForTests } from './cursor-sdk-usage';
+
+afterEach(() => {
+  setCursorSdkUsageForTests(null);
+});
 
 function jsonResponse(body: unknown, status = 200): Response {
   return {
@@ -10,6 +15,29 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 describe('CursorClient', () => {
   it('создаёт агента и ждёт ответ, когда fetch подменён', async () => {
+    setCursorSdkUsageForTests({
+      getRun: async () => ({
+        wait: async () => ({
+          usage: {
+            inputTokens: 1,
+            outputTokens: 2,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            totalTokens: 3,
+          },
+        }),
+      }),
+      getUsage: async () => ({
+        usage: {
+          inputTokens: 1,
+          outputTokens: 2,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          totalTokens: 3,
+        },
+        runs: [],
+      }),
+    });
     const calls: string[] = [];
     const fetchMock = jest.fn(async (url: string, init?: RequestInit) => {
       calls.push(`${init?.method ?? 'GET'} ${url}`);

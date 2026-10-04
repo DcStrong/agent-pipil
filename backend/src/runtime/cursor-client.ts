@@ -3,6 +3,8 @@
  * В тестах сеть подменяется через injectable fetch.
  */
 import { readGitRemoteUrl } from './saved-project';
+import { fetchCloudCursorStepUsage } from './cursor-sdk-usage';
+import type { CursorStepUsageCapture } from './cursor-usage';
 
 export interface CursorStepInput {
   token: string;
@@ -20,6 +22,7 @@ export interface CursorStepResult {
   runId: string;
   text: string;
   agentUrl: string | null;
+  usageCapture: CursorStepUsageCapture | null;
 }
 
 type FetchFn = typeof fetch;
@@ -144,7 +147,13 @@ export class CursorClient {
     if (!text) {
       throw new Error('Cursor не вернул текст ответа для шага.');
     }
-    return { agentId, runId, text, agentUrl };
+    let usageCapture = null;
+    try {
+      usageCapture = await fetchCloudCursorStepUsage(agentId, runId, token);
+    } catch {
+      usageCapture = null;
+    }
+    return { agentId, runId, text, agentUrl, usageCapture };
   }
 
   private async waitForRun(

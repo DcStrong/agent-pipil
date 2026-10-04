@@ -4,6 +4,7 @@ import { api, messageOf } from '../api'
 import { modeLabel, taskStatusLabel } from '../board'
 import { useLive } from '../live'
 import { href } from '../route'
+import { resolveTaskUsage, taskUsageKnown, TASK_USAGE_UNKNOWN } from '../task-usage'
 import type { BoardTask, Run, StepWork } from '../types'
 
 type StepView = {
@@ -74,6 +75,8 @@ export function TaskPage({ taskId }: { taskId: string }) {
   }
 
   const steps = stepsForTask(task, run)
+  const usageState = resolveTaskUsage(run?.usage, task.usage)
+  const usageKnown = taskUsageKnown(usageState)
   const onReview = task.status === 'review'
   const done = task.status === 'completed'
   const waitingQuestion = run?.status === 'waiting_user'
@@ -146,6 +149,46 @@ export function TaskPage({ taskId }: { taskId: string }) {
           </pre>
         </section>
       ) : null}
+
+      <section className="card task-usage-block" data-testid="task-usage">
+        <h2>Расход Cursor по задаче</h2>
+        {usageKnown && usageState?.totals ? (
+          <dl className="task-usage-grid">
+            <div>
+              <dt>Входные токены</dt>
+              <dd data-testid="usage-input">{usageState.totals.inputTokens.toLocaleString('ru-RU')}</dd>
+            </div>
+            <div>
+              <dt>Выходные токены</dt>
+              <dd data-testid="usage-output">{usageState.totals.outputTokens.toLocaleString('ru-RU')}</dd>
+            </div>
+            <div>
+              <dt>Кэш (чтение)</dt>
+              <dd data-testid="usage-cache-read">{usageState.totals.cacheReadTokens.toLocaleString('ru-RU')}</dd>
+            </div>
+            <div>
+              <dt>Кэш (запись)</dt>
+              <dd data-testid="usage-cache-write">{usageState.totals.cacheWriteTokens.toLocaleString('ru-RU')}</dd>
+            </div>
+            <div>
+              <dt>Всего токенов</dt>
+              <dd data-testid="usage-total">{usageState.totals.totalTokens.toLocaleString('ru-RU')}</dd>
+            </div>
+            {usageState.totals.chargedCents !== null ? (
+              <div>
+                <dt>Стоимость</dt>
+                <dd data-testid="usage-cost">
+                  ${(usageState.totals.chargedCents / 100).toFixed(2)}
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+        ) : (
+          <p className="hint" data-testid="usage-unknown">
+            {TASK_USAGE_UNKNOWN}
+          </p>
+        )}
+      </section>
 
       <section className="card agent-summaries" aria-labelledby="agent-steps">
         <h2 id="agent-steps">Что сделали агенты</h2>
