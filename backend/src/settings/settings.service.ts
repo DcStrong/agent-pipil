@@ -1,5 +1,7 @@
 import { BadRequestException, Injectable, OnModuleInit } from '@nestjs/common';
 import { tokenHint, type CursorConnectionMode } from '../domain';
+import { removeShellAllow } from '../runtime/shell-allow';
+import { normalizeAccessPath } from '../runtime/workspace-trust';
 import {
   CLI_LOGIN_FAILED_MESSAGE,
   CLI_LOGIN_NO_URL_MESSAGE,
@@ -22,6 +24,8 @@ export interface CursorConnection {
   cliSessionSignedIn: boolean;
   cliAccountLabel: string | null;
   cliLogin: CliLoginSnapshot;
+  workspaceGrants: string[];
+  shellGrants: Array<{ base: string; folder: string | null }>;
 }
 
 type CliSessionSnapshot = {
@@ -89,6 +93,14 @@ export class SettingsService implements OnModuleInit {
     const mode = this.connectionMode();
     const cliAgentAvailable = isAgentCliAvailable(env);
     const cliLogin = { ...this.cliLoginState };
+    const workspaceGrants = this.store
+      .read()
+      .accessGrants.filter((grant) => grant.kind === 'workspace')
+      .map((grant) => grant.path);
+    const shellGrants = this.store
+      .read()
+      .accessGrants.filter((grant) => grant.kind === 'shell')
+      .map((grant) => ({ base: grant.path, folder: grant.folder }));
     if (mode === 'cli') {
       const saved = this.store.read().cursorCliApiKey;
       const fromEnv = env.CURSOR_API_KEY?.trim();
@@ -113,6 +125,8 @@ export class SettingsService implements OnModuleInit {
         cliSessionSignedIn: sessionSignedIn,
         cliAccountLabel: sessionSignedIn ? this.cliSession.accountLabel : null,
         cliLogin,
+        workspaceGrants,
+        shellGrants,
       };
     }
     const saved = this.store.read().cursorToken;
@@ -126,6 +140,8 @@ export class SettingsService implements OnModuleInit {
         cliSessionSignedIn: false,
         cliAccountLabel: null,
         cliLogin,
+        workspaceGrants,
+        shellGrants,
       };
     }
     const fromEnv = env.CURSOR_API_TOKEN?.trim();
@@ -139,6 +155,8 @@ export class SettingsService implements OnModuleInit {
         cliSessionSignedIn: false,
         cliAccountLabel: null,
         cliLogin,
+        workspaceGrants,
+        shellGrants,
       };
     }
     return {
@@ -150,7 +168,41 @@ export class SettingsService implements OnModuleInit {
       cliSessionSignedIn: false,
       cliAccountLabel: null,
       cliLogin,
+      workspaceGrants,
+      shellGrants,
     };
+  }
+
+  revokeWorkspaceGrant(path: string): CursorConnection {
+    const key = normalizeAccessPath(path);
+    if (!key) throw new BadRequestException('Нужен путь папки.');
+    this.store.mutate((state) => {
+      state.accessGrants = state.accessGrants.filter(
+        (grant) => !(grant.kind === 'workspace' && grant.path === key),
+      );
+    });
+    return this.connection();
+  }
+
+  revokeShellGrant(base: string): CursorConnection {
+    const token = base.trim();
+    if (!token) throw new BadRequestException('Нужно имя команды.');
+    const folders = new Set<string>();
+    this.store.mutate((state) => {
+      for (const grant of state.accessGrants) {
+        if (grant.kind === 'shell' && grant.path === token && grant.folder) {
+          folders.add(grant.folder);
+        }
+      }
+      state.accessGrants = state.accessGrants.filter(
+        (grant) => !(grant.kind === 'shell' && grant.path === token),
+      );
+    });
+    for (const folder of folders) removeShellAllow(folder, token);
+    for (const project of this.store.read().projects) {
+      if (project.kind === 'folder') removeShellAllow(project.path, token);
+    }
+    return this.connection();
   }
 
   /** Шаг Cursor в текущем режиме можно запускать без ошибки конфигурации. */
@@ -354,7 +406,6 @@ export class SettingsService implements OnModuleInit {
       this.cliLoginState = {
         status: 'failed',
         loginUrl: this.cliLoginState.loginUrl,
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         message: outcome.message ?? CLI_LOGIN_FAILED_MESSAGE,
       };
     } catch (error) {

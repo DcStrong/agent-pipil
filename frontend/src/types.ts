@@ -16,10 +16,19 @@ export type RunStatus =
   | 'waiting_approval'
   | 'waiting_user'
   | 'waiting_plan'
+  | 'waiting_access'
+  | 'interrupted'
   | 'completed'
   | 'failed'
+export type AccessDecision = 'always' | 'once' | 'deny'
+export interface AccessRequest {
+  kind: 'workspace' | 'shell'
+  path: string
+  message: string
+  command?: string | null
+}
 export type ReturnShape = 'object' | 'array' | 'none'
-export type DialogueAuthor = 'role' | 'user' | 'handoff'
+export type DialogueAuthor = 'role' | 'user' | 'handoff' | 'trace'
 
 export interface Agent {
   id: string
@@ -171,6 +180,7 @@ export interface RunStep {
   brief: HandoffBrief | null
   question: string | null
   mapAddition: string | null
+  cliSessionId?: string | null
 }
 
 export interface Run {
@@ -191,6 +201,7 @@ export interface Run {
   project: ProjectSnapshot | null
   developerShape: ReturnShape
   pendingQuestion: string | null
+  pendingAccess?: AccessRequest | null
   mapWritten: boolean
   mapNote: string | null
   deepThinking: boolean
@@ -255,6 +266,8 @@ export interface CursorConnection {
   cliSessionSignedIn: boolean
   cliAccountLabel: string | null
   cliLogin: CursorCliLoginState
+  workspaceGrants?: string[]
+  shellGrants?: Array<{ base: string; folder: string | null }>
 }
 
 export type SavedProjectKind = 'folder' | 'workspace'

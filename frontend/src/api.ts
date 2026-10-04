@@ -149,7 +149,27 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ decision }),
     }),
+  grantAccess: (id: string, decision: 'always' | 'once' | 'deny') =>
+    request<Run>(`/api/runs/${id}/access`, {
+      method: 'POST',
+      body: JSON.stringify({ decision }),
+    }),
+  revokeWorkspaceGrant: (path: string) =>
+    request<CursorConnection>('/api/settings/cursor/trust', {
+      method: 'DELETE',
+      body: JSON.stringify({ path }),
+    }),
+  revokeShellGrant: (base: string) =>
+    request<CursorConnection>('/api/settings/cursor/shell', {
+      method: 'DELETE',
+      body: JSON.stringify({ base }),
+    }),
   stop: (id: string) => request<Run>(`/api/runs/${id}/stop`, { method: 'POST' }),
+  resumeRun: (id: string, mode: 'continue' | 'retry') =>
+    request<Run>(`/api/runs/${id}/resume`, {
+      method: 'POST',
+      body: JSON.stringify({ mode }),
+    }),
   cursor: () => request<CursorConnection>('/api/settings/cursor'),
   startCursorCliLogin: () =>
     request<CursorConnection>('/api/settings/cursor/cli/login', { method: 'POST' }),

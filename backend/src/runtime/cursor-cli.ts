@@ -11,6 +11,16 @@ import {
 } from './cursor-client';
 import { spawnAgentProcess } from './cursor-cli-spawn';
 import { fetchCliCursorStepUsage } from './cursor-sdk-usage';
+import { CliStreamDecoder, type CliTrace } from './cursor-cli-stream';
+import {
+  holdSessionShellAllows,
+  ShellApprovalRequiredError,
+  shellCommandBase,
+} from './shell-allow';
+import {
+  isWorkspaceTrustRequired,
+  WorkspaceTrustRequiredError,
+} from './workspace-trust';
 
 export const CURSOR_CLI_MISSING_AUTH_MESSAGE =
   'Нельзя выполнить шаг Cursor: нет входа в CLI и не задан CURSOR_API_KEY. Нажмите «Войти через Cursor» в настройках или сохраните ключ.';
@@ -25,6 +35,7 @@ export type CliExecInput = {
   prompt: string;
   timeoutMs: number;
   env: NodeJS.ProcessEnv;
+  onChunk?: (stream: 'stdout' | 'stderr', text: string) => void;
 };
 
 export type CliExecFn = (input: CliExecInput) => Promise<{
@@ -65,7 +76,9 @@ export function resolveAgentBinary(
   return null;
 }
 
-export function isAgentCliAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
+export function isAgentCliAvailable(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
   return resolveAgentBinary(env) !== null;
 }
 
@@ -101,7 +114,8 @@ function assertWorkspaceExists(input: CursorStepInput): string {
       );
     }
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith('Нельзя')) throw error;
+    if (error instanceof Error && error.message.startsWith('Нельзя'))
+      throw error;
     throw new Error(
       `Нельзя выполнить шаг Cursor: путь «${workspace}» не найден на сервере.`,
     );
@@ -114,7 +128,8 @@ function assertWorkspaceExists(input: CursorStepInput): string {
         );
       }
     } catch (error) {
-      if (error instanceof Error && error.message.startsWith('Нельзя')) throw error;
+      if (error instanceof Error && error.message.startsWith('Нельзя'))
+        throw error;
       throw new Error(
         `Нельзя выполнить шаг Cursor: папка проекта «${input.projectFolder.trim()}» не найдена на сервере.`,
       );
@@ -141,6 +156,7 @@ const defaultExec: CliExecFn = (input) =>
     cwd: input.cwd,
     env: input.env,
     timeoutMs: input.timeoutMs,
+    onChunk: input.onChunk,
   });
 
 /** Одно задание в папке или workspace через официальный CLI Cursor. */
@@ -148,6 +164,16 @@ export async function runCursorCliStep(
   input: CursorStepInput,
   env: NodeJS.ProcessEnv = process.env,
   cliApiKey: string | null = null,
+  options?: {
+    trust?: boolean;
+    onTrace?: (trace: CliTrace) => void;
+    /** Первое слово команды уже можно запускать. */
+    shellAllowed?: (base: string) => boolean;
+    /** «Один раз»: токены только на время этого процесса. */
+    sessionShellBases?: string[];
+    /** Id чата, как только он появился в стриме. */
+    onSession?: (id: string) => void;
+  },
 ): Promise<CursorStepResult> {
   const binary = resolveAgentBinary(env);
   if (!binary) {
@@ -160,23 +186,59 @@ export async function runCursorCliStep(
   const prompt = buildPrompt(input);
   const cwd =
     input.projectFolder?.trim() ||
-    (input.workspaceFile?.trim() ? dirname(input.workspaceFile.trim()) : process.cwd());
-  const args = ['-p', '--workspace', workspace];
+    (input.workspaceFile?.trim()
+      ? dirname(input.workspaceFile.trim())
+      : process.cwd());
+  const args = ['-p', '--output-format', 'stream-json'];
+  const resumeId = input.resumeChatId?.trim();
+  if (resumeId) args.push('--resume', resumeId);
+  if (options?.trust) args.push('--trust');
+  args.push('--workspace', workspace);
+  const decoder = new CliStreamDecoder();
+  const emit = options?.onTrace ?? (() => undefined);
+  const onSession = (id: string) => options?.onSession?.(id);
+  const onShell = (command: string) => {
+    const base = shellCommandBase(command);
+    if (!base || options?.shellAllowed?.(base)) return;
+    throw new ShellApprovalRequiredError(command);
+  };
+  const releaseSession = holdSessionShellAllows(
+    input.projectFolder?.trim() || cwd,
+    options?.sessionShellBases ?? [],
+  );
+  let streamed = false;
   const execFn = execForTests ?? defaultExec;
-  const result = await execFn({
-    binary,
-    args,
-    cwd,
-    prompt,
-    timeoutMs: readCliTimeoutMs(env),
-    env: spawnEnv,
-  });
+  let result: { stdout: string; stderr: string; code: number | null };
+  try {
+    result = await execFn({
+      binary,
+      args,
+      cwd,
+      prompt,
+      timeoutMs: readCliTimeoutMs(env),
+      env: spawnEnv,
+      onChunk: (stream, text) => {
+        if (stream !== 'stdout' || !text) return;
+        streamed = true;
+        decoder.push(text, emit, onShell, onSession);
+      },
+    });
+    if (!streamed) decoder.push(`${result.stdout}\n`, emit, onShell, onSession);
+    decoder.finish(emit, onShell, onSession);
+  } finally {
+    releaseSession();
+  }
   if (result.code !== 0) {
     const detail =
-      result.stderr.trim() || result.stdout.trim() || `код выхода ${result.code ?? '?'}`;
+      result.stderr.trim() ||
+      result.stdout.trim() ||
+      `код выхода ${result.code ?? '?'}`;
+    if (isWorkspaceTrustRequired(detail)) {
+      throw new WorkspaceTrustRequiredError(workspace);
+    }
     throw new Error(`Cursor CLI завершился с ошибкой: ${detail}`);
   }
-  const text = result.stdout.trim();
+  const text = decoder.finalText(result.stdout);
   if (!text) {
     throw new Error('Cursor CLI не вернул текст ответа для шага.');
   }
@@ -191,5 +253,6 @@ export async function runCursorCliStep(
     text,
     agentUrl: null,
     usageCapture,
+    cliSessionId: decoder.sessionId(),
   };
 }

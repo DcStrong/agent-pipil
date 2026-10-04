@@ -23,12 +23,35 @@ export type RunStatus =
   | 'waiting_approval'
   | 'waiting_user'
   | 'waiting_plan'
+  | 'waiting_access'
+  | 'interrupted'
   | 'completed'
   | 'failed';
+export type AccessKind = 'workspace' | 'shell';
+export type AccessDecision = 'always' | 'once' | 'deny';
+
+/** Запрос, который останавливает запуск, пока владелец не решит. */
+export interface AccessRequest {
+  kind: AccessKind;
+  /** Папка или первое слово команды. */
+  path: string;
+  message: string;
+  /** Полная shell-команда. У папки пусто. */
+  command: string | null;
+}
+
+/** Постоянное разрешение. «Один раз» в файл не пишется. */
+export interface AccessGrant {
+  kind: AccessKind;
+  path: string;
+  grantedAt: string;
+  /** Папка проекта для shell-разрешения. */
+  folder: string | null;
+}
 export type RunEventKind =
   'progress' | 'handoff' | 'approval' | 'question' | 'error' | 'done';
 export type ReturnShape = 'object' | 'array' | 'none';
-export type DialogueAuthor = 'role' | 'user' | 'handoff';
+export type DialogueAuthor = 'role' | 'user' | 'handoff' | 'trace';
 
 export interface Agent {
   id: string;
@@ -153,6 +176,8 @@ export interface RunStep {
   brief: HandoffBrief | null;
   question: string | null;
   mapAddition: string | null;
+  /** Id чата CLI. Пишется сразу из стрима, чтобы «Продолжить» могло передать `--resume`. */
+  cliSessionId: string | null;
 }
 
 export interface StepWork {
@@ -215,6 +240,8 @@ export interface Run {
   /** Какой формы объект вернул разработчик в последний раз. */
   developerShape: ReturnShape;
   pendingQuestion: string | null;
+  /** Доступ, который ждёт решения владельца. */
+  pendingAccess: AccessRequest | null;
   mapWritten: boolean;
   mapNote: string | null;
   /** Галка на задаче. Выключена — агенты берут задачу сразу. */
@@ -262,6 +289,8 @@ export interface State {
   cursorCliApiKey: string | null;
   /** CLI — локальный agent на машине backend; API — Cloud Agents. */
   cursorMode: CursorConnectionMode;
+  /** Папки, которым владелец доверяет постоянно для CLI. */
+  accessGrants: AccessGrant[];
 }
 
 export interface AgentContext {
@@ -683,6 +712,7 @@ export function createSeedState(): State {
     cursorToken: null,
     cursorCliApiKey: null,
     cursorMode: 'cli',
+    accessGrants: [],
   };
 }
 
@@ -844,7 +874,14 @@ function parseSnapshotSkill(value: unknown): AgentSkillSnapshot {
 }
 
 function parseAuthor(value: unknown): DialogueAuthor {
-  if (value === 'role' || value === 'user' || value === 'handoff') return value;
+  if (
+    value === 'role' ||
+    value === 'user' ||
+    value === 'handoff' ||
+    value === 'trace'
+  ) {
+    return value;
+  }
   return fail('автор реплики');
 }
 
@@ -956,6 +993,10 @@ function parseRunStep(value: unknown): RunStep {
     question: typeof value.question === 'string' ? value.question : null,
     mapAddition:
       typeof value.mapAddition === 'string' ? value.mapAddition : null,
+    cliSessionId:
+      typeof value.cliSessionId === 'string' && value.cliSessionId.trim()
+        ? value.cliSessionId.trim()
+        : null,
   };
 }
 
@@ -968,7 +1009,11 @@ function parseUsageTotalsFixed(value: unknown): TaskUsageTotals | null {
   if (value == null) return null;
   if (!isRecord(value)) fail('расход задачи');
   const charged = value.chargedCents;
-  if (charged !== null && charged !== undefined && typeof charged !== 'number') {
+  if (
+    charged !== null &&
+    charged !== undefined &&
+    typeof charged !== 'number'
+  ) {
     fail('стоимость расхода');
   }
   return {
@@ -977,8 +1022,7 @@ function parseUsageTotalsFixed(value: unknown): TaskUsageTotals | null {
     cacheReadTokens: parseNumber(value.cacheReadTokens, 'кэш чтение'),
     cacheWriteTokens: parseNumber(value.cacheWriteTokens, 'кэш запись'),
     totalTokens: parseNumber(value.totalTokens, 'всего токенов'),
-    chargedCents:
-      charged === undefined || charged === null ? null : charged,
+    chargedCents: charged === undefined || charged === null ? null : charged,
   };
 }
 
@@ -1094,6 +1138,8 @@ function parseRun(value: unknown): Run {
     status !== 'waiting_approval' &&
     status !== 'waiting_user' &&
     status !== 'waiting_plan' &&
+    status !== 'waiting_access' &&
+    status !== 'interrupted' &&
     status !== 'completed' &&
     status !== 'failed'
   ) {
@@ -1127,6 +1173,7 @@ function parseRun(value: unknown): Run {
     developerShape: parseShape(value.developerShape),
     pendingQuestion:
       typeof value.pendingQuestion === 'string' ? value.pendingQuestion : null,
+    pendingAccess: parseAccessRequest(value.pendingAccess),
     mapWritten: value.mapWritten === true,
     mapNote: typeof value.mapNote === 'string' ? value.mapNote : null,
     deepThinking: value.deepThinking === true,
@@ -1157,7 +1204,11 @@ export function parseState(value: unknown): State {
     fail('пресеты');
   }
   const cursorToken = value.cursorToken;
-  if (cursorToken !== null && cursorToken !== undefined && typeof cursorToken !== 'string') {
+  if (
+    cursorToken !== null &&
+    cursorToken !== undefined &&
+    typeof cursorToken !== 'string'
+  ) {
     fail('токен');
   }
   const cursorCliApiKey = value.cursorCliApiKey;
@@ -1171,7 +1222,8 @@ export function parseState(value: unknown): State {
   const cursorModeRaw = value.cursorMode;
   let cursorMode: CursorConnectionMode = 'cli';
   if (cursorModeRaw !== undefined) {
-    if (cursorModeRaw !== 'cli' && cursorModeRaw !== 'api') fail('режим Cursor');
+    if (cursorModeRaw !== 'cli' && cursorModeRaw !== 'api')
+      fail('режим Cursor');
     cursorMode = cursorModeRaw;
   }
   const projectsRaw = value.projects;
@@ -1187,9 +1239,55 @@ export function parseState(value: unknown): State {
       ? projectsRaw.map(parseSavedProject)
       : [],
     cursorToken: typeof cursorToken === 'string' ? cursorToken : null,
-    cursorCliApiKey: typeof cursorCliApiKey === 'string' ? cursorCliApiKey : null,
+    cursorCliApiKey:
+      typeof cursorCliApiKey === 'string' ? cursorCliApiKey : null,
     cursorMode,
+    accessGrants: parseAccessGrants(value.accessGrants),
   };
+}
+
+function parseAccessRequest(value: unknown): AccessRequest | null {
+  if (value === null || value === undefined) return null;
+  if (!isRecord(value)) fail('запрос доступа');
+  if (value.kind !== 'workspace' && value.kind !== 'shell') fail('вид доступа');
+  return {
+    kind: value.kind,
+    path: text(value.path, 'путь доступа'),
+    message: text(value.message, 'текст запроса доступа'),
+    command: typeof value.command === 'string' ? value.command : null,
+  };
+}
+
+function parseAccessGrants(value: unknown): AccessGrant[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) fail('разрешения доступа');
+  return value.map((item) => {
+    if (
+      !isRecord(item) ||
+      (item.kind !== 'workspace' && item.kind !== 'shell')
+    ) {
+      fail('разрешение доступа');
+    }
+    return {
+      kind: item.kind,
+      path: text(item.path, 'путь разрешения'),
+      grantedAt: text(item.grantedAt, 'время разрешения'),
+      folder: typeof item.folder === 'string' ? item.folder : null,
+    };
+  });
+}
+
+/** Отказ владельца и ручная остановка не продолжаются с места шага. */
+export function canResumeRun(run: {
+  status: RunStatus;
+  error: string | null;
+}): boolean {
+  if (run.status === 'interrupted') return true;
+  if (run.status !== 'failed') return false;
+  const error = run.error ?? '';
+  if (error.startsWith('Владелец ')) return false;
+  if (error === 'Запуск остановлен.') return false;
+  return true;
 }
 
 /** Последние 4 символа. Полный токен наружу не отдаём. */

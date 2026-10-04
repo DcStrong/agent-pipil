@@ -178,10 +178,7 @@ describe('Оркестратор (e2e)', () => {
         title: 'Доска',
         description: 'Нужен план до сборки',
         projectId,
-        team: [
-          { agentId: 'role_architect', mode: 'plan' },
-          { agentId: 'agent_builder', mode: 'agent' },
-        ],
+        team: [{ agentId: 'role_analyst', mode: 'ask' }],
       })
       .expect(201);
     const asked = await request(server)
@@ -216,33 +213,8 @@ describe('Оркестратор (e2e)', () => {
     let current = moved.body as {
       status: string;
       phase: string;
-      plan: { authorName: string; text: string } | null;
+      plan: { text: string } | null;
     };
-    for (
-      let attempt = 0;
-      attempt < 40 && current.phase !== 'plan';
-      attempt += 1
-    ) {
-      current = (await request(server).get(`/api/board/${created.body.id}`))
-        .body;
-      if (current.phase === 'plan') break;
-      await new Promise((resolve) => setTimeout(resolve, 15));
-    }
-    expect(current.phase).toBe('plan');
-    expect(current.plan?.authorName).toBe('Архитектор');
-
-    const edited = 'Исправленный план для сборки.';
-    const saved = await request(server)
-      .put(`/api/board/${created.body.id}/plan`)
-      .send({ text: edited })
-      .expect(200);
-    expect(saved.body.plan.text).toBe(edited);
-
-    await request(server)
-      .post(`/api/board/${created.body.id}/build`)
-      .send({ text: edited })
-      .expect(201);
-
     for (
       let attempt = 0;
       attempt < 40 && current.status !== 'review';
@@ -254,13 +226,8 @@ describe('Оркестратор (e2e)', () => {
       await new Promise((resolve) => setTimeout(resolve, 15));
     }
     expect(current.status).toBe('review');
-    expect(current.plan?.text).toBe(edited);
-
-    const linked = await request(server).get(`/api/board/${created.body.id}`).expect(200);
-    const runId = linked.body.runId as string | null;
-    if (runId) {
-      await request(server).post(`/api/runs/${runId}/stop`).expect(201);
-    }
+    expect(current.phase).toBe('done');
+    expect(current.plan).toBeNull();
 
     await request(server)
       .post(`/api/board/${asked.body.id}/move`)

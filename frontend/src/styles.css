@@ -225,9 +225,9 @@ h1, h2 { font-weight: 600; letter-spacing: -0.03em; }
   font-weight: 600;
   white-space: nowrap;
 }
-.pill.running, .pill.waiting_approval, .pill.waiting_user, .pill.waiting_plan { background: var(--amber-bg); color: var(--amber); }
+.pill.running, .pill.waiting_approval, .pill.waiting_user, .pill.waiting_plan, .pill.waiting_access { background: var(--amber-bg); color: var(--amber); }
 .pill.completed, .pill.on { background: var(--green-bg); color: var(--green); }
-.pill.failed { background: var(--red-bg); color: var(--red); }
+.pill.failed, .pill.interrupted { background: var(--red-bg); color: var(--red); }
 .pill.idle { background: #222228; color: var(--muted); }
 
 .empty { padding: 22px 16px; color: var(--muted); }
@@ -675,6 +675,12 @@ button:not(.primary):not(.icon-btn):not(.text-btn):not(.node):not(.menu-item):no
 }
 .bubble.user { background: #1a2430; }
 .bubble.handoff { background: #241f12; color: #e6d7a8; }
+.trace-line {
+  margin: 4px 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
 
 .modal-back {
   position: fixed;

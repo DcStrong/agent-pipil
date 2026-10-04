@@ -1,11 +1,12 @@
 /**
- * Доска задач. Команда стартует при переносе в in_progress.
- * Ход всегда имитация: клиент Cursor здесь не создаётся и сеть не вызывается,
- * даже если у агента среда Cursor и токен уже сохранён.
+ * Доска задач. Перенос в in_progress стартует живой запуск.
+ * Колонка и заметки повторяют этот запуск: на проверку задача
+ * попадает, когда он завершился, а не по таймеру имитации.
  */
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
   Injectable,
   NotFoundException,
   OnModuleDestroy,
@@ -15,6 +16,7 @@ import { randomUUID } from 'node:crypto';
 import type { Agent, StepMode, WorkflowStep } from '../domain';
 import { displayName } from '../runtime/saved-project';
 import { orderSteps } from '../runtime/step-graph';
+import { applyRunToTask } from './run-card';
 import { ProjectsService } from '../projects/projects.service';
 import { RunsService } from '../runs/runs.service';
 import { readDelayMs } from '../runtime/orchestrator';
@@ -55,6 +57,10 @@ export class BoardService implements OnModuleInit, OnModuleDestroy {
   /** Если сервер погас посреди хода, имитация продолжается с той же фазы. */
   onModuleInit(): void {
     for (const task of this.store.read().tasks) {
+      if (task.runId) {
+        this.catchUpFromRun(task.id, task.runId);
+        continue;
+      }
       this.resume(task.id, task.phase);
     }
   }
@@ -193,7 +199,6 @@ export class BoardService implements OnModuleInit, OnModuleDestroy {
       );
       task.updatedAt = now;
     });
-    this.schedule(id, () => this.finishPickup(id));
     return this.must(id);
   }
 
@@ -280,7 +285,6 @@ export class BoardService implements OnModuleInit, OnModuleDestroy {
       task.runId = runId;
       task.updatedAt = new Date().toISOString();
     });
-    this.schedule(id, () => this.finishPickup(id));
     return this.must(id);
   }
 
@@ -366,7 +370,8 @@ export class BoardService implements OnModuleInit, OnModuleDestroy {
           'Сейчас уже идёт другой запуск. Остановите его или дождитесь завершения, затем снова переведите задачу в работу.',
         );
       }
-      throw error;
+      if (error instanceof HttpException) throw error;
+      throw error instanceof Error ? error : new Error(String(error));
     }
   }
 
@@ -513,6 +518,20 @@ export class BoardService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  private catchUpFromRun(taskId: string, runId: string): void {
+    let run;
+    try {
+      run = this.runs.get(runId);
+    } catch {
+      return;
+    }
+    this.store.mutate((state) => {
+      const task = state.tasks.find((item) => item.id === taskId);
+      if (!task) return;
+      applyRunToTask(task, run);
+    });
+  }
+
   private resume(taskId: string, phase: BoardPhase): void {
     if (phase === 'working')
       this.schedule(taskId, () => this.finishPickup(taskId));
@@ -545,7 +564,8 @@ export class BoardService implements OnModuleInit, OnModuleDestroy {
         run.status === 'running' ||
         run.status === 'waiting_approval' ||
         run.status === 'waiting_user' ||
-        run.status === 'waiting_plan'
+        run.status === 'waiting_plan' ||
+        run.status === 'waiting_access'
       ) {
         this.runs.stop(runId);
       }

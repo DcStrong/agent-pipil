@@ -278,7 +278,7 @@ describe('Процессы: удаление из списка', () => {
       finalResult: null,
       error: null,
       project: null,
-      developerShape: 'text',
+      developerShape: 'none',
       pendingQuestion: null,
       mapWritten: false,
       mapNote: null,

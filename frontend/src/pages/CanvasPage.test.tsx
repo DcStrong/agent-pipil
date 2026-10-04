@@ -57,7 +57,8 @@ function makeRun(status: RunStatus): Run {
     status === 'running' ||
     status === 'waiting_approval' ||
     status === 'waiting_user' ||
-    status === 'waiting_plan'
+    status === 'waiting_plan' ||
+    status === 'waiting_access'
   return {
     id: 'run-1',
     workflowId: 'wf-1',

@@ -1,11 +1,14 @@
 /** Задача на доске: сводки агентов, полный диалог запуска и действия на проверке. */
 import { useState } from 'react'
 import { api, messageOf } from '../api'
+import { ResumeRun } from '../components/ResumeRun'
+import { canResumeRun } from '../format'
+import { AccessPrompt } from '../components/AccessPrompt'
 import { modeLabel, taskStatusLabel } from '../board'
 import { useLive } from '../live'
 import { href } from '../route'
 import { resolveTaskUsage, taskUsageKnown, TASK_USAGE_UNKNOWN } from '../task-usage'
-import type { BoardTask, Run, StepWork } from '../types'
+import type { AccessDecision, BoardTask, Run, StepWork } from '../types'
 
 type StepView = {
   key: string
@@ -81,6 +84,19 @@ export function TaskPage({ taskId }: { taskId: string }) {
   const done = task.status === 'completed'
   const waitingQuestion = run?.status === 'waiting_user'
 
+  async function resume(mode: 'continue' | 'retry') {
+    if (!run) return
+    setBusy(true)
+    setError(null)
+    try {
+      upsertRun(await api.resumeRun(run.id, mode))
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function complete() {
     setBusy(true)
     setError(null)
@@ -99,6 +115,19 @@ export function TaskPage({ taskId }: { taskId: string }) {
     try {
       upsertTask(await api.reopenTask(taskId, reopenNote))
       setReopenNote('')
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function grant(decision: AccessDecision) {
+    if (!run) return
+    setBusy(true)
+    setError(null)
+    try {
+      upsertRun(await api.grantAccess(run.id, decision))
     } catch (reason) {
       setError(messageOf(reason))
     } finally {
@@ -222,6 +251,14 @@ export function TaskPage({ taskId }: { taskId: string }) {
           ))}
         </ol>
       </section>
+
+      {run && canResumeRun(run) ? (
+        <ResumeRun run={run} busy={busy} onResume={(mode) => void resume(mode)} />
+      ) : null}
+
+      {run?.status === 'waiting_access' ? (
+        <AccessPrompt run={run} busy={busy} onDecide={(decision) => void grant(decision)} />
+      ) : null}
 
       {waitingQuestion && onReview ? (
         <section className="card review-question" data-testid="task-question">

@@ -15,6 +15,10 @@ export interface CursorStepInput {
   skills: Array<{ name: string; instructions: string }>;
   projectFolder: string | null;
   workspaceFile: string | null;
+  /** Уже открытый чат CLI. Пусто — новый диалог. */
+  resumeChatId?: string | null;
+  /** Контекст обрыва, если тот же чат продолжить нельзя. */
+  retryNote?: string | null;
 }
 
 export interface CursorStepResult {
@@ -23,6 +27,7 @@ export interface CursorStepResult {
   text: string;
   agentUrl: string | null;
   usageCapture: CursorStepUsageCapture | null;
+  cliSessionId?: string | null;
 }
 
 type FetchFn = typeof fetch;
@@ -82,6 +87,9 @@ export function buildPrompt(input: CursorStepInput): string {
     lines.push(
       'Код и тесты выполняются на машине пользователя, не внутри облачного агента, если репозиторий не подключён.',
     );
+  }
+  if (input.retryNote?.trim()) {
+    lines.push('', 'Продолжение после обрыва:', input.retryNote.trim());
   }
   lines.push('', 'Ответь по-русски, кратко и по делу.');
   return lines.join('\n');

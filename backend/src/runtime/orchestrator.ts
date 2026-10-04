@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type {
+  AccessDecision,
   AgentContext,
   AgentKind,
   DialogueAuthor,
@@ -14,6 +15,7 @@ import {
   isAgentCliAvailable,
   runCursorCliStep,
 } from './cursor-cli';
+import type { CliTrace } from './cursor-cli-stream';
 import { CursorClient } from './cursor-client';
 import type { CursorConnectionMode } from '../domain';
 import { writeProjectMap } from './project-folder';
@@ -32,6 +34,28 @@ import {
   type PieceMode,
 } from './task-order';
 import { recordCursorStepUsage } from './cursor-usage';
+import { ShellApprovalRequiredError } from './shell-allow';
+import { normalizeAccessPath } from './workspace-trust';
+
+type RunOptions = {
+  delayMs?: number;
+  cursorConnected: boolean;
+  live: boolean;
+  cursorMode: CursorConnectionMode;
+  cursorToken: string | null;
+  resolveCliAuth?: () => Promise<{ ready: boolean; apiKey: string | null }>;
+  projectFolder: string | null;
+  workspaceFile: string | null;
+  isWorkspaceTrusted?: (path: string) => boolean;
+  grantWorkspaceAlways?: (path: string) => void;
+  isShellAllowed?: (base: string, folder: string) => boolean;
+  grantShellAlways?: (base: string, folder: string) => void;
+  /** С какого шага продолжать. Пусто — с начала. */
+  startAtStep?: number;
+  resumeMode?: 'continue' | 'retry';
+  /** Текст обрыва для нового промпта, если тот же чат CLI недоступен. */
+  retryError?: string | null;
+};
 
 export function readDelayMs(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env.SIM_DELAY_MS;
@@ -49,11 +73,36 @@ const ROLE_KINDS = new Set<AgentKind>([
   'tester',
 ]);
 
+function cwdFolder(options: {
+  projectFolder: string | null;
+  workspaceFile: string | null;
+}): string {
+  if (options.projectFolder?.trim()) return options.projectFolder.trim();
+  const file = options.workspaceFile?.trim();
+  if (!file) return '';
+  const slash = file.lastIndexOf('/');
+  return slash > 0 ? file.slice(0, slash) : '';
+}
+
 function sleep(ms: number): Promise<void> {
   if (ms <= 0) return Promise.resolve();
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function continuationNote(run: Run, error: string | null): string {
+  const done = run.work
+    .map((item) => `${item.agentName} / ${item.title}: ${item.summary}`)
+    .filter((line) => line.trim())
+    .join('\n');
+  return [
+    error?.trim() ? `Прошлый обрыв: ${error.trim()}` : '',
+    done ? `Уже сделано:\n${done}` : '',
+    'Продолжай этот шаг. Готовые шаги не переделывай.',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 function say(step: RunStep, author: DialogueAuthor, text: string): void {
@@ -101,6 +150,14 @@ export class Orchestrator {
   private readonly gates = new Map<string, (approved: boolean) => void>();
   private readonly answers = new Map<string, (text: string) => void>();
   private readonly plans = new Map<string, (plan: TaskPlan) => void>();
+  private readonly accessGates = new Map<
+    string,
+    (decision: AccessDecision) => void
+  >();
+  /** «Один раз»: папка доверена только до конца этого запуска. */
+  private readonly sessionTrusts = new Map<string, Set<string>>();
+  /** «Один раз»: первое слово команды до конца этого запуска. */
+  private readonly sessionShells = new Map<string, Set<string>>();
   /** Тот же объект, который ведёт цикл. Останов пишет в него сразу, не дожидаясь микрозадачи. */
   private readonly liveRuns = new Map<string, Run>();
   /** Текст, которым владелец оборвал запуск. Пока он есть, цикл не идёт дальше. */
@@ -131,6 +188,241 @@ export class Orchestrator {
     return this.liveRuns.get(runId) ?? null;
   }
 
+  /** Ожидание уже висит в памяти этого процесса. */
+  hasWaiter(runId: string): boolean {
+    return (
+      this.gates.has(runId) ||
+      this.answers.has(runId) ||
+      this.plans.has(runId) ||
+      this.accessGates.has(runId)
+    );
+  }
+
+  /**
+   * После рестарта процесса вопрос, план и доступ остаются в запуске,
+   * а промис ожидания — нет. Вешает его сразу и продолжает шаг после решения.
+   */
+  bindSavedWait(
+    run: Run,
+    publish: (run: Run) => void,
+    options: RunOptions,
+  ): boolean {
+    if (this.hasWaiter(run.id)) return true;
+    if (this.liveRuns.has(run.id)) return false;
+    const index = run.stepIndex ?? 0;
+    const step = run.steps[index];
+    if (run.status === 'waiting_user') {
+      if (!step || !run.pendingQuestion) return false;
+      this.arm(run);
+      const pending = new Promise<string>((resolve) => {
+        this.answers.set(run.id, resolve);
+      });
+      this.bound(run, publish, async () => {
+        const answer = await pending;
+        const tell = () => publish(structuredClone(run));
+        if (this.halted.has(run.id)) {
+          this.markHalted(run);
+          tell();
+          return;
+        }
+        const answeredAt = new Date().toISOString();
+        say(step, 'user', answer.trim());
+        run.status = 'running';
+        run.pendingQuestion = null;
+        run.updatedAt = answeredAt;
+        run.events.push({
+          id: randomUUID(),
+          at: answeredAt,
+          kind: 'question',
+          message: `Владелец ответил в диалоге «${step.title}».`,
+          stepIndex: index,
+        });
+        tell();
+        const passes = run.work.filter(
+          (item) => item.stepId === step.stepId,
+        ).length;
+        const second = await this.speak(
+          run,
+          step,
+          index,
+          run.steps[index - 1]?.brief ?? null,
+          answer.trim(),
+          passes,
+        );
+        if (this.halted.has(run.id)) {
+          this.markHalted(run);
+          tell();
+          return;
+        }
+        say(step, 'role', second.text);
+        step.brief = second.handoff;
+        step.mapAddition = second.mapAddition ?? step.mapAddition;
+        step.question = null;
+        this.finishWork(run, step, answeredAt, second.text);
+        if (step.mode === 'approval') {
+          const rejected = await this.waitApproval(run, step, index, tell);
+          if (rejected) return;
+        }
+        await this.executeSteps(run, publish, {
+          ...options,
+          startAtStep: index + 1,
+        });
+      });
+      return true;
+    }
+    if (run.status === 'waiting_approval') {
+      if (!step) return false;
+      this.arm(run);
+      const pending = new Promise<boolean>((resolve) => {
+        this.gates.set(run.id, resolve);
+      });
+      this.bound(run, publish, async () => {
+        const approved = await pending;
+        const tell = () => publish(structuredClone(run));
+        if (this.halted.has(run.id)) {
+          this.markHalted(run);
+          tell();
+          return;
+        }
+        const decidedAt = new Date().toISOString();
+        run.updatedAt = decidedAt;
+        if (!approved) {
+          run.status = 'failed';
+          run.error = 'Владелец отклонил шаг.';
+          run.finishedAt = decidedAt;
+          run.events.push({
+            id: randomUUID(),
+            at: decidedAt,
+            kind: 'error',
+            message: run.error,
+            stepIndex: index,
+          });
+          tell();
+          return;
+        }
+        run.status = 'running';
+        run.events.push({
+          id: randomUUID(),
+          at: decidedAt,
+          kind: 'approval',
+          message: `Владелец подтвердил «${step.title}».`,
+          stepIndex: index,
+        });
+        tell();
+        await this.executeSteps(run, publish, {
+          ...options,
+          startAtStep: index + 1,
+        });
+      });
+      return true;
+    }
+    if (run.status === 'waiting_access') {
+      if (!run.pendingAccess) return false;
+      this.arm(run);
+      const pending = new Promise<AccessDecision>((resolve) => {
+        this.accessGates.set(run.id, resolve);
+      });
+      this.bound(run, publish, async () => {
+        const decision = await pending;
+        const tell = () => publish(structuredClone(run));
+        const request = run.pendingAccess;
+        run.pendingAccess = null;
+        if (this.halted.has(run.id) || decision === 'deny') {
+          if (decision === 'deny' && !this.halted.has(run.id)) {
+            const reason =
+              request?.kind === 'shell'
+                ? `Владелец не разрешил команду: ${request.command ?? request.path}`
+                : 'Владелец не разрешил доступ к папке проекта.';
+            this.halted.set(run.id, reason);
+          }
+          this.markHalted(run);
+          tell();
+          return;
+        }
+        const folder = options.projectFolder?.trim() || cwdFolder(options);
+        if (decision === 'always') {
+          if (request?.kind === 'workspace')
+            options.grantWorkspaceAlways?.(request.path);
+          if (request?.kind === 'shell')
+            options.grantShellAlways?.(request.path, folder);
+        }
+        if (decision === 'once') {
+          if (request?.kind === 'workspace') {
+            const granted = this.sessionTrusts.get(run.id) ?? new Set<string>();
+            granted.add(request.path);
+            this.sessionTrusts.set(run.id, granted);
+          }
+          if (request?.kind === 'shell') {
+            const granted = this.sessionShells.get(run.id) ?? new Set<string>();
+            granted.add(request.path);
+            this.sessionShells.set(run.id, granted);
+          }
+        }
+        const decidedAt = new Date().toISOString();
+        run.status = 'running';
+        run.updatedAt = decidedAt;
+        run.events.push({
+          id: randomUUID(),
+          at: decidedAt,
+          kind: 'approval',
+          message:
+            request?.kind === 'shell'
+              ? decision === 'always'
+                ? `Команда «${request.path}» разрешена постоянно.`
+                : `Команда «${request.path}» разрешена на этот запуск.`
+              : decision === 'always'
+                ? `Папка ${request?.path ?? ''} разрешена постоянно.`
+                : `Папка ${request?.path ?? ''} разрешена на этот запуск.`,
+          stepIndex: index,
+        });
+        tell();
+        await this.executeSteps(run, publish, {
+          ...options,
+          startAtStep: index,
+          resumeMode: 'continue',
+          retryError: null,
+        });
+      });
+      return true;
+    }
+    if (run.status === 'waiting_plan') {
+      this.arm(run);
+      const pending = new Promise<TaskPlan>((resolve) => {
+        this.plans.set(run.id, resolve);
+      });
+      this.bound(run, publish, async () => {
+        const edited = await pending;
+        const tell = () => publish(structuredClone(run));
+        if (this.halted.has(run.id)) {
+          this.markHalted(run);
+          tell();
+          return;
+        }
+        run.plan = edited;
+        this.persistPieces(run);
+        const acceptedAt = new Date().toISOString();
+        run.updatedAt = acceptedAt;
+        const planIndex = run.steps.findIndex((item) => item.mode === 'plan');
+        run.events.push({
+          id: randomUUID(),
+          at: acceptedAt,
+          kind: 'progress',
+          message: 'План принят. Сборка берёт его в контекст.',
+          stepIndex: planIndex >= 0 ? planIndex : null,
+        });
+        tell();
+        await this.completeDeep(
+          run,
+          tell,
+          options.delayMs ?? readDelayMs(),
+          edited,
+        );
+      });
+      return true;
+    }
+    return false;
+  }
+
   /**
    * Обрывает ожидание и сразу помечает запуск неуспешным.
    * Возвращает живой объект или null, если цикла уже нет.
@@ -154,6 +446,27 @@ export class Orchestrator {
     return true;
   }
 
+  /** Всегда, один раз на этот запуск, или отказ. */
+  grantAccess(runId: string, decision: AccessDecision): boolean {
+    const resolve = this.accessGates.get(runId);
+    if (!resolve) return false;
+    this.accessGates.delete(runId);
+    if (decision === 'deny') {
+      const run = this.liveRuns.get(runId);
+      if (run) {
+        const pending = run.pendingAccess;
+        const reason =
+          pending?.kind === 'shell'
+            ? `Владелец не разрешил команду: ${pending.command ?? pending.path}`
+            : 'Владелец не разрешил доступ к папке проекта.';
+        this.halted.set(runId, reason);
+        this.markHalted(run);
+      }
+    }
+    resolve(decision);
+    return true;
+  }
+
   /** Принимает план, который владелец поправил перед сборкой. */
   revise(runId: string, plan: TaskPlan): boolean {
     const resolve = this.plans.get(runId);
@@ -166,52 +479,44 @@ export class Orchestrator {
   async execute(
     run: Run,
     publish: (run: Run) => void,
-    options: {
-      delayMs?: number;
-      cursorConnected: boolean;
-      live: boolean;
-      cursorMode: CursorConnectionMode;
-      cursorToken: string | null;
-      resolveCliAuth?: () => Promise<{ ready: boolean; apiKey: string | null }>;
-      projectFolder: string | null;
-      workspaceFile: string | null;
-    },
+    options: RunOptions,
   ): Promise<void> {
     this.liveRuns.set(run.id, run);
     try {
       if (run.deepThinking) {
-        await this.executeDeep(run, publish, options.delayMs ?? readDelayMs());
+        await this.executeDeep(
+          run,
+          publish,
+          options.delayMs ?? readDelayMs(),
+          Boolean(options.resumeMode),
+        );
         return;
       }
       await this.executeSteps(run, publish, options);
     } finally {
-      this.liveRuns.delete(run.id);
-      this.halted.delete(run.id);
-      this.gates.delete(run.id);
-      this.answers.delete(run.id);
-      this.plans.delete(run.id);
+      this.release(run.id);
     }
   }
 
   private async executeSteps(
     run: Run,
     publish: (run: Run) => void,
-    options: {
-      delayMs?: number;
-      cursorConnected: boolean;
-      live: boolean;
-      cursorMode: CursorConnectionMode;
-      cursorToken: string | null;
-      resolveCliAuth?: () => Promise<{ ready: boolean; apiKey: string | null }>;
-      projectFolder: string | null;
-      workspaceFile: string | null;
-    },
+    options: RunOptions,
   ): Promise<void> {
     const delayMs = options.delayMs ?? readDelayMs();
     const tell = () => publish(structuredClone(run));
-    let incoming: HandoffBrief | null = null;
+    const startAt = Math.max(
+      0,
+      Math.min(options.startAtStep ?? 0, run.steps.length),
+    );
+    let incoming: HandoffBrief | null =
+      startAt > 0 ? (run.steps[startAt - 1]?.brief ?? null) : null;
+    let resume =
+      options.resumeMode && startAt < run.steps.length
+        ? { mode: options.resumeMode, error: options.retryError ?? null }
+        : null;
     try {
-      let index = 0;
+      let index = startAt;
       let guard = 0;
       while (index < run.steps.length) {
         guard += 1;
@@ -226,7 +531,9 @@ export class Orchestrator {
           tell,
           delayMs,
           options,
+          resume,
         );
+        resume = null;
         if (run.status === 'failed' || this.halted.has(run.id)) return;
         const sendBack =
           step.kind === 'tester' &&
@@ -272,8 +579,10 @@ export class Orchestrator {
       this.gates.delete(run.id);
       this.answers.delete(run.id);
       this.plans.delete(run.id);
+      this.accessGates.delete(run.id);
       run.status = 'failed';
       run.pendingQuestion = null;
+      run.pendingAccess = null;
       run.error =
         error instanceof Error ? error.message : 'Шаг завершился ошибкой.';
       run.finishedAt = failedAt;
@@ -295,15 +604,8 @@ export class Orchestrator {
     incoming: HandoffBrief | null,
     tell: () => void,
     delayMs: number,
-    options: {
-      cursorConnected: boolean;
-      live: boolean;
-      cursorMode: CursorConnectionMode;
-      cursorToken: string | null;
-      resolveCliAuth?: () => Promise<{ ready: boolean; apiKey: string | null }>;
-      projectFolder: string | null;
-      workspaceFile: string | null;
-    },
+    options: RunOptions,
+    resume: { mode: 'continue' | 'retry'; error: string | null } | null,
   ): Promise<HandoffBrief | null> {
     if (this.halted.has(run.id)) {
       this.markHalted(run);
@@ -312,9 +614,13 @@ export class Orchestrator {
     }
     const step = run.steps[index];
     const started = new Date().toISOString();
+    const continuing =
+      resume?.mode === 'continue' &&
+      step.messages.some((message) => message.text.trim().length > 0);
     run.status = 'running';
     run.stepIndex = index;
     run.pendingQuestion = null;
+    run.pendingAccess = null;
     run.updatedAt = started;
     const viaCursor = step.harness === 'cursor';
     const note = viaCursor
@@ -328,16 +634,18 @@ export class Orchestrator {
             ? `${step.agentName} не может вызвать Cursor: на сервере нужны CLI «agent» и вход или ключ CURSOR_API_KEY.`
             : `${step.agentName} не может вызвать Cursor: живой режим выключен (CURSOR_LIVE=0).`
       : `${step.agentName} открыл новый диалог «${step.title}».`;
-    run.events.push({
-      id: randomUUID(),
-      at: started,
-      kind: 'progress',
-      message: note,
-      stepIndex: index,
-    });
-    if (incoming) say(step, 'handoff', briefLine(incoming));
-    if (step.kind === 'orchestrator' && step.mode === 'question') {
-      say(step, 'user', run.task.trim());
+    if (!continuing) {
+      run.events.push({
+        id: randomUUID(),
+        at: started,
+        kind: 'progress',
+        message: note,
+        stepIndex: index,
+      });
+      if (incoming) say(step, 'handoff', briefLine(incoming));
+      if (step.kind === 'orchestrator' && step.mode === 'question') {
+        say(step, 'user', run.task.trim());
+      }
     }
     tell();
     await sleep(delayMs);
@@ -387,7 +695,25 @@ export class Orchestrator {
           throw new Error(CURSOR_CLI_MISSING_AUTH_MESSAGE);
         }
         cliApiKey = cliAuth.apiKey;
+        const folder =
+          options.workspaceFile?.trim() || options.projectFolder?.trim() || '';
+        const allowed = await this.allowWorkspace(
+          run,
+          folder,
+          index,
+          tell,
+          options,
+        );
+        if (!allowed) return step.brief;
       }
+      if (resume?.mode === 'retry') step.cliSessionId = null;
+      const sessionId =
+        resume?.mode === 'continue' ? step.cliSessionId?.trim() || null : null;
+      const retryNote = resume
+        ? sessionId
+          ? 'Продолжи тот же диалог. Сервер перезапустился, этот шаг ещё не закончен.'
+          : continuationNote(run, resume.error)
+        : null;
       const stepInput = {
         token: options.cursorToken ?? '',
         task: run.task,
@@ -397,11 +723,63 @@ export class Orchestrator {
         skills: step.skills,
         projectFolder: options.projectFolder,
         workspaceFile: options.workspaceFile,
+        resumeChatId: sessionId,
+        retryNote,
       };
-      const cursorResult =
-        options.cursorMode === 'cli'
-          ? await runCursorCliStep(stepInput, process.env, cliApiKey)
-          : await this.cursor.runStep(stepInput);
+      let lastTraceTell = 0;
+      const onTrace = (trace: CliTrace) => {
+        say(step, 'trace', trace.text);
+        const now = Date.now();
+        if (trace.kind === 'tool' || now - lastTraceTell >= 400) {
+          lastTraceTell = now;
+          tell();
+        }
+      };
+      const onSession = (id: string) => {
+        if (step.cliSessionId === id) return;
+        step.cliSessionId = id;
+        tell();
+      };
+      const projectDir = options.projectFolder?.trim() || cwdFolder(options);
+      let cursorResult;
+      if (options.cursorMode === 'cli') {
+        for (;;) {
+          try {
+            cursorResult = await runCursorCliStep(
+              stepInput,
+              process.env,
+              cliApiKey,
+              {
+                trust: true,
+                onTrace,
+                onSession,
+                shellAllowed: (base) =>
+                  this.shellBaseAllowed(run.id, base, projectDir, options),
+                sessionShellBases: [...(this.sessionShells.get(run.id) ?? [])],
+              },
+            );
+            break;
+          } catch (error) {
+            if (!(error instanceof ShellApprovalRequiredError)) throw error;
+            const allowed = await this.allowShell(
+              run,
+              error.command,
+              error.base,
+              projectDir,
+              index,
+              tell,
+              options,
+            );
+            if (!allowed) return step.brief;
+          }
+        }
+      } else {
+        cursorResult = await this.cursor.runStep(stepInput);
+      }
+      if (cursorResult.cliSessionId?.trim()) {
+        step.cliSessionId = cursorResult.cliSessionId.trim();
+      }
+      tell();
       const link =
         cursorResult.agentUrl != null
           ? ` Ссылка: ${cursorResult.agentUrl}.`
@@ -656,78 +1034,18 @@ export class Orchestrator {
     return false;
   }
 
-  /**
-   * Галка включена: заметка, план, сборка по чеклисту, сверка, архив.
-   * Режим шага выбирает, кто пишет кусок. Дерево холста не переставляется.
-   * Cursor здесь не вызывается.
-   */
-  private async executeDeep(
+  /** Сборка и сверка после уже принятого плана. Готовые куски второй раз не пишет. */
+  private async completeDeep(
     run: Run,
-    publish: (run: Run) => void,
+    tell: () => void,
     delayMs: number,
+    edited: TaskPlan,
   ): Promise<void> {
-    const tell = () => publish(structuredClone(run));
-    try {
-      const started = new Date().toISOString();
-      run.status = 'running';
-      run.updatedAt = started;
-      run.events.push({
-        id: randomUUID(),
-        at: started,
-        kind: 'progress',
-        message: 'Глубокое мышление: сначала короткая заметка, затем план.',
-        stepIndex: null,
-      });
-      tell();
-
-      const note = lookNote(run.task, run.project);
-      run.note = note;
-      const noted = await this.showPiece(
-        run,
-        'ask',
-        note,
-        'Короткая заметка: что уже есть в проекте.',
-        tell,
-        delayMs,
-      );
-      if (!noted) return;
-
-      run.plan = draftPlan(run.task);
-      this.persistPieces(run);
-      const planIndex = run.steps.findIndex((step) => step.mode === 'plan');
-      const waitingAt = new Date().toISOString();
-      run.status = 'waiting_plan';
-      run.stepIndex = planIndex >= 0 ? planIndex : null;
-      run.pendingQuestion = null;
-      run.updatedAt = waitingAt;
-      run.events.push({
-        id: randomUUID(),
-        at: waitingAt,
-        kind: 'progress',
-        message: 'План из четырёх частей можно поправить перед сборкой.',
-        stepIndex: run.stepIndex,
-      });
-      tell();
-
-      const edited = await new Promise<TaskPlan>((resolve) => {
-        this.plans.set(run.id, resolve);
-      });
-      if (this.halted.has(run.id)) {
-        this.markHalted(run);
-        tell();
-        return;
-      }
-      run.plan = edited;
-      this.persistPieces(run);
-      const acceptedAt = new Date().toISOString();
-      run.updatedAt = acceptedAt;
-      run.events.push({
-        id: randomUUID(),
-        at: acceptedAt,
-        kind: 'progress',
-        message: 'План принят. Сборка берёт его в контекст.',
-        stepIndex: planIndex >= 0 ? planIndex : null,
-      });
+    const planStep = run.steps.find((step) => step.mode === 'plan');
+    if (
+      !planStep ||
+      !run.work.some((item) => item.stepId === planStep.stepId)
+    ) {
       const planned = await this.showPiece(
         run,
         'plan',
@@ -737,7 +1055,9 @@ export class Orchestrator {
         delayMs,
       );
       if (!planned) return;
+    }
 
+    if (!run.buildText) {
       const built = buildFromPlan(edited);
       run.buildText = built;
       const assembled = await this.showPiece(
@@ -749,8 +1069,10 @@ export class Orchestrator {
         delayMs,
       );
       if (!assembled) return;
+    }
 
-      const review = reviewAgainst(edited, built);
+    if (!run.reviewText) {
+      const review = reviewAgainst(edited, run.buildText ?? '');
       run.reviewText = review;
       const reviewed = await this.showPiece(
         run,
@@ -761,31 +1083,119 @@ export class Orchestrator {
         delayMs,
       );
       if (!reviewed) return;
+    }
 
-      const ended = new Date().toISOString();
+    const ended = new Date().toISOString();
+    const note = run.note ?? lookNote(run.task, run.project);
+    const buildText = run.buildText ?? '';
+    const reviewText = run.reviewText ?? '';
+    if (!run.archive) {
       run.archive = {
         note,
         plan: edited,
-        result: archiveResult(built, review),
+        result: archiveResult(buildText, reviewText),
         at: ended,
         folder: null,
       };
       this.persistArchive(run);
-      this.closeMap(run);
-      run.status = 'completed';
-      run.stepIndex = null;
-      run.pendingQuestion = null;
-      run.finalResult = run.archive.result;
-      run.finishedAt = ended;
-      run.updatedAt = ended;
-      run.events.push({
-        id: randomUUID(),
-        at: ended,
-        kind: 'done',
-        message: 'План и результат лежат в архиве задачи.',
-        stepIndex: null,
-      });
-      tell();
+    }
+    this.closeMap(run);
+    run.status = 'completed';
+    run.stepIndex = null;
+    run.pendingQuestion = null;
+    run.finalResult =
+      run.archive?.result ?? archiveResult(buildText, reviewText);
+    run.finishedAt = ended;
+    run.updatedAt = ended;
+    run.events.push({
+      id: randomUUID(),
+      at: ended,
+      kind: 'done',
+      message: 'План и результат лежат в архиве задачи.',
+      stepIndex: null,
+    });
+    tell();
+  }
+
+  /**
+   * Галка включена: заметка, план, сборка по чеклисту, сверка, архив.
+   * Режим шага выбирает, кто пишет кусок. Дерево холста не переставляется.
+   * Cursor здесь не вызывается.
+   */
+  private async executeDeep(
+    run: Run,
+    publish: (run: Run) => void,
+    delayMs: number,
+    resuming = false,
+  ): Promise<void> {
+    const tell = () => publish(structuredClone(run));
+    try {
+      if (!resuming || !run.note) {
+        const started = new Date().toISOString();
+        run.status = 'running';
+        run.updatedAt = started;
+        run.events.push({
+          id: randomUUID(),
+          at: started,
+          kind: 'progress',
+          message: 'Глубокое мышление: сначала короткая заметка, затем план.',
+          stepIndex: null,
+        });
+        tell();
+
+        const note = lookNote(run.task, run.project);
+        run.note = note;
+        const noted = await this.showPiece(
+          run,
+          'ask',
+          note,
+          'Короткая заметка: что уже есть в проекте.',
+          tell,
+          delayMs,
+        );
+        if (!noted) return;
+      }
+
+      let edited = resuming ? run.plan : null;
+      if (!edited) {
+        run.plan = draftPlan(run.task);
+        this.persistPieces(run);
+        const planIndex = run.steps.findIndex((step) => step.mode === 'plan');
+        const waitingAt = new Date().toISOString();
+        run.status = 'waiting_plan';
+        run.stepIndex = planIndex >= 0 ? planIndex : null;
+        run.pendingQuestion = null;
+        run.updatedAt = waitingAt;
+        run.events.push({
+          id: randomUUID(),
+          at: waitingAt,
+          kind: 'progress',
+          message: 'План из четырёх частей можно поправить перед сборкой.',
+          stepIndex: run.stepIndex,
+        });
+        tell();
+
+        edited = await new Promise<TaskPlan>((resolve) => {
+          this.plans.set(run.id, resolve);
+        });
+        if (this.halted.has(run.id)) {
+          this.markHalted(run);
+          tell();
+          return;
+        }
+        run.plan = edited;
+        this.persistPieces(run);
+        const acceptedAt = new Date().toISOString();
+        run.updatedAt = acceptedAt;
+        run.events.push({
+          id: randomUUID(),
+          at: acceptedAt,
+          kind: 'progress',
+          message: 'План принят. Сборка берёт его в контекст.',
+          stepIndex: planIndex >= 0 ? planIndex : null,
+        });
+      }
+      await this.completeDeep(run, tell, delayMs, edited);
     } catch (error) {
       if (this.halted.has(run.id)) {
         this.markHalted(run);
@@ -796,8 +1206,10 @@ export class Orchestrator {
       this.gates.delete(run.id);
       this.answers.delete(run.id);
       this.plans.delete(run.id);
+      this.accessGates.delete(run.id);
       run.status = 'failed';
       run.pendingQuestion = null;
+      run.pendingAccess = null;
       run.error =
         error instanceof Error ? error.message : 'Шаг завершился ошибкой.';
       run.finishedAt = failedAt;
@@ -867,6 +1279,47 @@ export class Orchestrator {
     return true;
   }
 
+  private arm(run: Run): void {
+    this.liveRuns.set(run.id, run);
+  }
+
+  /** Доводит сохранённое ожидание и снимает запуск с памяти, когда цикл кончился. */
+  private bound(
+    run: Run,
+    publish: (run: Run) => void,
+    body: () => Promise<void>,
+  ): void {
+    void body()
+      .catch((error: unknown) => {
+        if (run.status === 'failed' || run.status === 'completed') return;
+        if (this.halted.has(run.id)) {
+          this.markHalted(run);
+        } else {
+          const failedAt = new Date().toISOString();
+          run.status = 'failed';
+          run.error =
+            error instanceof Error ? error.message : 'Шаг завершился ошибкой.';
+          run.finishedAt = failedAt;
+          run.updatedAt = failedAt;
+          run.pendingQuestion = null;
+          run.pendingAccess = null;
+        }
+        publish(structuredClone(run));
+      })
+      .finally(() => this.release(run.id));
+  }
+
+  private release(runId: string): void {
+    this.liveRuns.delete(runId);
+    this.halted.delete(runId);
+    this.gates.delete(runId);
+    this.answers.delete(runId);
+    this.plans.delete(runId);
+    this.accessGates.delete(runId);
+    this.sessionTrusts.delete(runId);
+    this.sessionShells.delete(runId);
+  }
+
   /** Ставит причину обрыва один раз. Повторный вызов не дописывает событие. */
   private markHalted(run: Run): void {
     const reason = this.halted.get(run.id);
@@ -876,6 +1329,7 @@ export class Orchestrator {
     run.status = 'failed';
     run.error = reason;
     run.pendingQuestion = null;
+    run.pendingAccess = null;
     run.finishedAt = at;
     run.updatedAt = at;
     run.events.push({
@@ -904,6 +1358,155 @@ export class Orchestrator {
       this.plans.delete(runId);
       plan({ why: '', changes: '', how: '', checklist: '' });
     }
+    const access = this.accessGates.get(runId);
+    if (access) {
+      this.accessGates.delete(runId);
+      access('deny');
+    }
+  }
+
+  private shellBaseAllowed(
+    runId: string,
+    base: string,
+    folder: string,
+    options: RunOptions,
+  ): boolean {
+    if (this.sessionShells.get(runId)?.has(base)) return true;
+    return options.isShellAllowed?.(base, folder) === true;
+  }
+
+  /** Останавливает шаг, пока владелец не разрешит конкретную команду. */
+  private async allowShell(
+    run: Run,
+    command: string,
+    base: string,
+    folder: string,
+    index: number,
+    tell: () => void,
+    options: RunOptions,
+  ): Promise<boolean> {
+    if (this.shellBaseAllowed(run.id, base, folder, options)) return true;
+    if (this.halted.has(run.id)) {
+      this.markHalted(run);
+      tell();
+      return false;
+    }
+    const askedAt = new Date().toISOString();
+    run.status = 'waiting_access';
+    run.pendingAccess = {
+      kind: 'shell',
+      path: base,
+      command,
+      message: 'Агент хочет выполнить команду в папке проекта. Разрешить её?',
+    };
+    run.updatedAt = askedAt;
+    run.events.push({
+      id: randomUUID(),
+      at: askedAt,
+      kind: 'approval',
+      message: `Нужно разрешение на команду: ${command}`,
+      stepIndex: index,
+    });
+    tell();
+    const decision = await new Promise<AccessDecision>((resolve) => {
+      this.accessGates.set(run.id, resolve);
+    });
+    run.pendingAccess = null;
+    if (this.halted.has(run.id) || decision === 'deny') {
+      this.markHalted(run);
+      tell();
+      return false;
+    }
+    if (decision === 'always') options.grantShellAlways?.(base, folder);
+    if (decision === 'once') {
+      const granted = this.sessionShells.get(run.id) ?? new Set<string>();
+      granted.add(base);
+      this.sessionShells.set(run.id, granted);
+    }
+    const decidedAt = new Date().toISOString();
+    run.status = 'running';
+    run.updatedAt = decidedAt;
+    run.events.push({
+      id: randomUUID(),
+      at: decidedAt,
+      kind: 'approval',
+      message:
+        decision === 'always'
+          ? `Команда «${base}» разрешена постоянно.`
+          : `Команда «${base}» разрешена на этот запуск.`,
+      stepIndex: index,
+    });
+    tell();
+    return true;
+  }
+
+  /** Останавливает шаг CLI, пока владелец не решит, доверять ли папке. */
+  private async allowWorkspace(
+    run: Run,
+    folder: string,
+    index: number,
+    tell: () => void,
+    options: RunOptions,
+  ): Promise<boolean> {
+    const path = normalizeAccessPath(folder);
+    if (!path) return false;
+    const trusted =
+      options.isWorkspaceTrusted?.(path) === true ||
+      this.sessionTrusts.get(run.id)?.has(path) === true;
+    if (trusted) return true;
+    if (this.halted.has(run.id)) {
+      this.markHalted(run);
+      tell();
+      return false;
+    }
+    const askedAt = new Date().toISOString();
+    run.status = 'waiting_access';
+    run.pendingAccess = {
+      kind: 'workspace',
+      path,
+      command: null,
+      message:
+        'Cursor Agent может выполнять код и читать файлы в этой папке. Доверяете ей?',
+    };
+    run.updatedAt = askedAt;
+    run.events.push({
+      id: randomUUID(),
+      at: askedAt,
+      kind: 'approval',
+      message: `Нужен доступ к папке ${path}.`,
+      stepIndex: index,
+    });
+    tell();
+    const decision = await new Promise<AccessDecision>((resolve) => {
+      this.accessGates.set(run.id, resolve);
+    });
+    run.pendingAccess = null;
+    if (this.halted.has(run.id) || decision === 'deny') {
+      this.markHalted(run);
+      tell();
+      return false;
+    }
+    if (decision === 'always') options.grantWorkspaceAlways?.(path);
+    if (decision === 'once') {
+      const granted = this.sessionTrusts.get(run.id) ?? new Set<string>();
+      granted.add(path);
+      this.sessionTrusts.set(run.id, granted);
+    }
+    const decidedAt = new Date().toISOString();
+    run.status = 'running';
+    run.updatedAt = decidedAt;
+    run.events.push({
+      id: randomUUID(),
+      at: decidedAt,
+      kind: 'approval',
+      message:
+        decision === 'always'
+          ? `Папка ${path} разрешена постоянно.`
+          : `Папка ${path} разрешена на этот запуск.`,
+      stepIndex: index,
+    });
+    tell();
+    return true;
   }
 
   private persistPieces(run: Run): void {

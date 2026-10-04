@@ -60,7 +60,9 @@ describe('fetchCloudCursorStepUsage', () => {
 
 describe('fetchCliCursorStepUsage', () => {
   it('не зовёт getUsage для заглушки local-cli', async () => {
-    const getUsage = jest.fn();
+    const getUsage = jest.fn(async () => {
+      throw new Error('getUsage не должен вызываться');
+    });
     setCursorSdkUsageForTests({ getUsage });
     const capture = await fetchCliCursorStepUsage('ответ', '', 'key');
     expect(getUsage).not.toHaveBeenCalled();

@@ -27,27 +27,40 @@ export function spawnAgentProcess(input: AgentSpawnInput): Promise<AgentSpawnRes
     });
     let stdout = '';
     let stderr = '';
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const finish = (error: unknown, result?: AgentSpawnResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error instanceof Error ? error : new Error(String(error)));
+      else if (result) resolve(result);
+    };
+    const take = (stream: 'stdout' | 'stderr', text: string) => {
+      if (stream === 'stdout') stdout += text;
+      else stderr += text;
+      try {
+        onChunk?.(stream, text);
+      } catch (error) {
+        child.kill('SIGTERM');
+        finish(error);
+      }
+    };
     child.stdout?.on('data', (chunk: Buffer | string) => {
-      const text = chunk.toString();
-      stdout += text;
-      onChunk?.('stdout', text);
+      take('stdout', chunk.toString());
     });
     child.stderr?.on('data', (chunk: Buffer | string) => {
-      const text = chunk.toString();
-      stderr += text;
-      onChunk?.('stderr', text);
+      take('stderr', chunk.toString());
     });
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       child.kill('SIGTERM');
-      reject(new Error('Превышено время ожидания команды Cursor CLI.'));
+      finish(new Error('Превышено время ожидания команды Cursor CLI.'));
     }, input.timeoutMs);
     child.on('error', (error) => {
-      clearTimeout(timer);
-      reject(error);
+      finish(error);
     });
     child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({ stdout, stderr, code });
+      finish(null, { stdout, stderr, code });
     });
   });
 }

@@ -12,7 +12,9 @@ const filters: Array<{ id: 'all' | RunStatus; label: string }> = [
   { id: 'running', label: 'Выполняется' },
   { id: 'waiting_approval', label: 'Ждёт подтверждения' },
   { id: 'waiting_plan', label: 'Можно править план' },
+  { id: 'waiting_access', label: 'Ждёт доступа' },
   { id: 'completed', label: 'Готово' },
+  { id: 'interrupted', label: 'Прерван' },
   { id: 'failed', label: 'Ошибка' },
 ]
 
@@ -71,10 +73,16 @@ function stepsWord(count: number): string {
 
 function StatusGlyph({ status }: { status: RunStatus }) {
   if (status === 'completed') return <IconCheck className="glyph ok" />
-  if (status === 'failed') return <span className="glyph bad" aria-hidden="true" />
+  if (status === 'failed' || status === 'interrupted') {
+    return <span className="glyph bad" aria-hidden="true" />
+  }
   return (
     <IconSpark
-      className={status === 'waiting_approval' || status === 'waiting_plan' ? 'glyph wait' : 'glyph run'}
+      className={
+        status === 'waiting_approval' || status === 'waiting_plan' || status === 'waiting_access'
+          ? 'glyph wait'
+          : 'glyph run'
+      }
     />
   )
 }

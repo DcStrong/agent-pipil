@@ -62,4 +62,28 @@ export class SettingsController {
     }
     return this.settings.setMode(mode as CursorConnectionMode);
   }
+
+  @Delete('trust')
+  revokeTrust(@Body() body: unknown): CursorConnection {
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      throw new BadRequestException('Ожидался JSON-объект.');
+    }
+    const path = (body as { path?: unknown }).path;
+    if (typeof path !== 'string') {
+      throw new BadRequestException('Нужно поле path.');
+    }
+    return this.settings.revokeWorkspaceGrant(path);
+  }
+
+  @Delete('shell')
+  revokeShell(@Body() body: unknown): CursorConnection {
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      throw new BadRequestException('Ожидался JSON-объект.');
+    }
+    const base = (body as { base?: unknown }).base;
+    if (typeof base !== 'string') {
+      throw new BadRequestException('Нужно поле base.');
+    }
+    return this.settings.revokeShellGrant(base);
+  }
 }

@@ -118,6 +118,30 @@ export function SettingsPage() {
     }
   }
 
+  async function revokeShell(base: string) {
+    setError(null)
+    setNote(null)
+    try {
+      await api.revokeShellGrant(base)
+      await reload()
+      setNote('Постоянное разрешение команды отозвано.')
+    } catch (reason) {
+      setError(messageOf(reason))
+    }
+  }
+
+  async function revokeGrant(path: string) {
+    setError(null)
+    setNote(null)
+    try {
+      await api.revokeWorkspaceGrant(path)
+      await reload()
+      setNote('Постоянный доступ к папке отозван.')
+    } catch (reason) {
+      setError(messageOf(reason))
+    }
+  }
+
   async function logoutCliSession() {
     setError(null)
     setNote(null)
@@ -256,6 +280,43 @@ export function SettingsPage() {
               </label>
             ) : null}
             {loginMessage ? <p className={cursor?.cliLogin.status === 'failed' ? 'error-line' : 'hint'}>{loginMessage}</p> : null}
+            {(cursor?.shellGrants?.length ?? 0) > 0 ? (
+              <div data-testid="shell-grants">
+                <p className="hint">Команды с постоянным доступом</p>
+                <ul>
+                  {cursor?.shellGrants?.map((grant) => (
+                    <li key={`${grant.base}:${grant.folder ?? ''}`}>
+                      <span>
+                        {grant.base}
+                        {grant.folder ? ` · ${grant.folder}` : ''}
+                      </span>{' '}
+                      <button type="button" onClick={() => void revokeShell(grant.base)}>
+                        Отозвать
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {(cursor?.workspaceGrants?.length ?? 0) > 0 ? (
+              <div data-testid="workspace-grants">
+                <p className="hint">Папки с постоянным доступом для CLI</p>
+                <ul>
+                  {cursor?.workspaceGrants?.map((path) => (
+                    <li key={path}>
+                      <span>{path}</span>{' '}
+                      <button
+                        type="button"
+                        data-testid={`revoke-grant-${path}`}
+                        onClick={() => void revokeGrant(path)}
+                      >
+                        Отозвать
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </div>
         ) : null}
         <form onSubmit={(event) => void save(event)}>

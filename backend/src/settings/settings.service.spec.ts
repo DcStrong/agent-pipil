@@ -14,7 +14,11 @@ describe('SettingsService CLI session', () => {
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), 'pipil-settings-'));
     const moduleRef = await Test.createTestingModule({
-      providers: [SettingsService, StoreService, { provide: DATA_PATH, useValue: join(directory, 'state.json') }],
+      providers: [
+        SettingsService,
+        StoreService,
+        { provide: DATA_PATH, useValue: join(directory, 'state.json') },
+      ],
     }).compile();
     settings = moduleRef.get(SettingsService);
     settings.setMode('cli');

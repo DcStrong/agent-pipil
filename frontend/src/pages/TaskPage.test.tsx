@@ -9,6 +9,7 @@ const harness = vi.hoisted(() => ({
   completeTask: vi.fn(),
   reopenTask: vi.fn(),
   answerTask: vi.fn(),
+  resumeRun: vi.fn(),
 }))
 
 vi.mock('../live', () => ({
@@ -20,6 +21,7 @@ vi.mock('../api', () => ({
     completeTask: (...args: unknown[]) => harness.completeTask(...args),
     reopenTask: (...args: unknown[]) => harness.reopenTask(...args),
     answerTask: (...args: unknown[]) => harness.answerTask(...args),
+    resumeRun: (...args: unknown[]) => harness.resumeRun(...args),
   },
   messageOf: (error: unknown) => (error instanceof Error ? error.message : 'ошибка'),
 }))
@@ -106,6 +108,7 @@ afterEach(() => {
   harness.completeTask.mockReset()
   harness.reopenTask.mockReset()
   harness.answerTask.mockReset()
+  harness.resumeRun.mockReset()
 })
 
 describe('TaskPage — проверка', () => {
@@ -170,6 +173,29 @@ describe('TaskPage — проверка', () => {
     fireEvent.change(screen.getByTestId('task-answer'), { target: { value: 'JSON объект' } })
     fireEvent.click(screen.getByTestId('task-send-answer'))
     await waitFor(() => expect(harness.answerTask).toHaveBeenCalledWith('t1', 'JSON объект'))
+    expect(upsertRun).toHaveBeenCalled()
+  })
+
+  it('у прерванного запуска предлагает продолжить и повторить шаг', async () => {
+    const upsertRun = vi.fn()
+    harness.live = {
+      ...liveState(),
+      upsertRun,
+      runs: [
+        {
+          ...run,
+          status: 'interrupted',
+          pendingQuestion: null,
+          error: 'Сервер перезапустился, пока шаг ещё шёл.',
+        },
+      ],
+    }
+    harness.resumeRun.mockResolvedValue({ ...run, status: 'running', error: null })
+    render(<TaskPage taskId="t1" />)
+    expect(screen.getByTestId('resume-continue').textContent).toContain('Продолжить')
+    expect(screen.getByTestId('resume-retry').textContent).toContain('Повторить шаг')
+    fireEvent.click(screen.getByTestId('resume-continue'))
+    await waitFor(() => expect(harness.resumeRun).toHaveBeenCalledWith('run1', 'continue'))
     expect(upsertRun).toHaveBeenCalled()
   })
 })

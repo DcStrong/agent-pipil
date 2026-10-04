@@ -1,8 +1,12 @@
 /** Журнал одного запуска и панель сведений. Текст ошибки приходит с сервера. */
 import { useState } from 'react'
 import { api, messageOf } from '../api'
+import { AccessPrompt } from '../components/AccessPrompt'
+import { DialogueLines, dialogueIsRunning } from '../components/DialogueLines'
 import { TaskOrderPanel } from '../components/TaskOrderPanel'
+import { ResumeRun } from '../components/ResumeRun'
 import {
+  canResumeRun,
   clock,
   duration,
   eventTag,
@@ -14,7 +18,7 @@ import {
 } from '../format'
 import { useLive } from '../live'
 import { href } from '../route'
-import type { TaskPlan } from '../types'
+import type { AccessDecision, TaskPlan } from '../types'
 
 export function RunPage({ runId }: { runId: string }) {
   const { ready, runs, upsertRun } = useLive()
@@ -23,6 +27,19 @@ export function RunPage({ runId }: { runId: string }) {
   const [busy, setBusy] = useState(false)
   const [opened, setOpened] = useState<string | null>(null)
   const [answer, setAnswer] = useState('')
+
+  async function resumeRun(mode: 'continue' | 'retry') {
+    if (!run || !canResumeRun(run)) return
+    setBusy(true)
+    setError(null)
+    try {
+      upsertRun(await api.resumeRun(run.id, mode))
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function sendAnswer() {
     if (!run) return
@@ -44,6 +61,19 @@ export function RunPage({ runId }: { runId: string }) {
     setError(null)
     try {
       upsertRun(await api.saveRunPlan(run.id, plan))
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function grant(decision: AccessDecision) {
+    if (!run) return
+    setBusy(true)
+    setError(null)
+    try {
+      upsertRun(await api.grantAccess(run.id, decision))
     } catch (reason) {
       setError(messageOf(reason))
     } finally {
@@ -141,11 +171,10 @@ export function RunPage({ runId }: { runId: string }) {
           .map((item) => (
             <section key={item.dialogueId} className="dialogue" data-testid="dialogue">
               <h2>Диалог · {item.title}</h2>
-              {item.messages.map((message) => (
-                <p key={message.id} className={`bubble ${message.author}`}>
-                  {message.text}
-                </p>
-              ))}
+              <DialogueLines
+                messages={item.messages}
+                running={dialogueIsRunning(run.status, run.stepIndex != null && run.steps[run.stepIndex]?.stepId === item.stepId)}
+              />
             </section>
           ))}
         {run.deepThinking ? <TaskOrderPanel run={run} busy={busy} onSave={savePlan} /> : null}
@@ -167,6 +196,9 @@ export function RunPage({ runId }: { runId: string }) {
             </div>
           </div>
         ) : null}
+        {run.status === 'waiting_access' ? (
+          <AccessPrompt run={run} busy={busy} onDecide={(decision) => void grant(decision)} />
+        ) : null}
         {run.status === 'waiting_approval' ? (
           <div className="decision">
             <p>Шаг ждёт вашего подтверждения.</p>
@@ -186,7 +218,11 @@ export function RunPage({ runId }: { runId: string }) {
             <p>{finalText(run.finalResult)}</p>
           </article>
         ) : null}
-        {run.error ? <p className="error-line">{run.error}</p> : null}
+        {canResumeRun(run) ? (
+          <ResumeRun run={run} busy={busy} onResume={(mode) => void resumeRun(mode)} />
+        ) : run.error ? (
+          <p className="error-line">{run.error}</p>
+        ) : null}
         {error ? <p className="error-line">{error}</p> : null}
       </section>
       <aside className="details">

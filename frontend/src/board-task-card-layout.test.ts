@@ -1,9 +1,13 @@
 /** Проверка CSS карточки задачи на доске. */
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
-const styles = readFileSync(join(import.meta.dirname, 'styles.css'), 'utf8')
+const styles = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), 'styles.css'),
+  'utf8',
+)
 
 describe('карточка задачи на доске', () => {
   it('не наследует боковые отступы .hint у строки проекта', () => {

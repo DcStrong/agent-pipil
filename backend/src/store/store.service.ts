@@ -31,7 +31,7 @@ export class StoreService {
       rolesAdded ||
       presetsAdded ||
       projectsAdded ||
-      this.failInterruptedRuns()
+      this.markInterruptedRuns()
     ) {
       this.enqueueWrite();
     }
@@ -69,7 +69,8 @@ export class StoreService {
         run.status === 'running' ||
         run.status === 'waiting_approval' ||
         run.status === 'waiting_user' ||
-        run.status === 'waiting_plan',
+        run.status === 'waiting_plan' ||
+        run.status === 'waiting_access',
     );
   }
 
@@ -87,9 +88,13 @@ export class StoreService {
         run.status === 'running' ||
         run.status === 'waiting_approval' ||
         run.status === 'waiting_user' ||
-        run.status === 'waiting_plan',
+        run.status === 'waiting_plan' ||
+        run.status === 'waiting_access',
     );
-    const chosen = active ?? this.state.runs[0];
+    const interrupted = this.state.runs.find(
+      (run) => run.status === 'interrupted',
+    );
+    const chosen = active ?? interrupted ?? this.state.runs[0];
     return chosen ? structuredClone(chosen) : null;
   }
 
@@ -119,24 +124,39 @@ export class StoreService {
     }
   }
 
-  private failInterruptedRuns(): boolean {
+  /**
+   * Процесс умер посреди шага: дочерний agent уже не жив.
+   * Ожидание владельца не трогаем — вопрос, план и доступ лежат в состоянии.
+   */
+  private markInterruptedRuns(): boolean {
     let changed = false;
     for (const run of this.state.runs) {
-      if (
-        run.status !== 'running' &&
-        run.status !== 'waiting_approval' &&
-        run.status !== 'waiting_user' &&
-        run.status !== 'waiting_plan'
-      ) {
-        continue;
+      if (run.status !== 'running') continue;
+      const step =
+        run.stepIndex !== null && run.stepIndex >= 0
+          ? run.steps[run.stepIndex]
+          : undefined;
+      const now = new Date().toISOString();
+      run.status = 'interrupted';
+      run.error = step
+        ? `Сервер перезапустился, пока шаг «${step.title}» ещё шёл. Можно продолжить или повторить этот шаг.`
+        : 'Сервер перезапустился, пока запуск ещё шёл. Можно продолжить или повторить шаг.';
+      run.finishedAt = null;
+      run.updatedAt = now;
+      if (step) {
+        const last = step.messages[step.messages.length - 1];
+        if (last?.text !== run.error) {
+          step.messages.push({
+            id: randomUUID(),
+            at: now,
+            author: 'role',
+            text: run.error,
+          });
+        }
       }
-      run.status = 'failed';
-      run.error = 'Сервер перезапустился, пока запуск ещё шёл.';
-      run.updatedAt = new Date().toISOString();
-      run.finishedAt = run.updatedAt;
       run.events.push({
         id: randomUUID(),
-        at: run.updatedAt,
+        at: now,
         kind: 'error',
         message: run.error,
         stepIndex: run.stepIndex,

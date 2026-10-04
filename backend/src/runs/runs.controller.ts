@@ -104,8 +104,7 @@ export class RunsController {
       roleIds: roleIds as string[] | undefined,
       projectPath:
         typeof record.projectPath === 'string' ? record.projectPath : null,
-      projectId:
-        typeof record.projectId === 'string' ? record.projectId : null,
+      projectId: typeof record.projectId === 'string' ? record.projectId : null,
       mapPath: typeof record.mapPath === 'string' ? record.mapPath : null,
       deepThinking: record.deepThinking === true,
     });
@@ -141,6 +140,18 @@ export class RunsController {
     return this.runs.stop(id);
   }
 
+  @Post(':id/resume')
+  resume(@Param('id') id: string, @Body() body: unknown): Run {
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      throw new BadRequestException('Ожидался JSON-объект.');
+    }
+    const mode = (body as { mode?: unknown }).mode;
+    if (mode !== 'continue' && mode !== 'retry') {
+      throw new BadRequestException('Режим: continue или retry.');
+    }
+    return this.runs.resume(id, mode);
+  }
+
   @Post(':id/decision')
   decide(@Param('id') id: string, @Body() body: unknown): Run {
     if (typeof body !== 'object' || body === null || Array.isArray(body)) {
@@ -151,5 +162,17 @@ export class RunsController {
       throw new BadRequestException('Решение: approve или reject.');
     }
     return this.runs.decide(id, decision === 'approve');
+  }
+
+  @Post(':id/access')
+  grantAccess(@Param('id') id: string, @Body() body: unknown): Run {
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      throw new BadRequestException('Ожидался JSON-объект.');
+    }
+    const decision = (body as { decision?: unknown }).decision;
+    if (decision !== 'always' && decision !== 'once' && decision !== 'deny') {
+      throw new BadRequestException('Решение: always, once или deny.');
+    }
+    return this.runs.grantAccess(id, decision);
   }
 }

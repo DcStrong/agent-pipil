@@ -1,7 +1,15 @@
 import { ConflictException } from '@nestjs/common';
+import { type Run, type RunStep } from '../domain';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  rm,
+  writeFile,
+  readFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ProjectsService } from '../projects/projects.service';
@@ -21,7 +29,10 @@ function installCursorFetchMock(): () => void {
         ok: true,
         status: 201,
         json: async () => ({
-          agent: { id: 'bc-mock-agent', url: 'https://cursor.com/agents/bc-mock-agent' },
+          agent: {
+            id: 'bc-mock-agent',
+            url: 'https://cursor.com/agents/bc-mock-agent',
+          },
           run: { id: 'run-mock-1' },
         }),
       } as Response;
@@ -232,14 +243,14 @@ describe('RunsService', () => {
     expect(finished.work.length).toBeLessThanOrEqual(finished.steps.length);
     const known = new Set(finished.steps.map((step) => step.stepId));
     const seen = new Set(
-      finished.work
-        .map((item) => item.stepId)
-        .filter((id) => known.has(id)),
+      finished.work.map((item) => item.stepId).filter((id) => known.has(id)),
     );
     expect(seen.size).toBeLessThanOrEqual(finished.steps.length);
-    expect(runs.list().some((run) => run.id === started.id && run.status === 'waiting_user')).toBe(
-      false,
-    );
+    expect(
+      runs
+        .list()
+        .some((run) => run.id === started.id && run.status === 'waiting_user'),
+    ).toBe(false);
   });
 
   it('остановка незавершённого запуска снимает блокировку процесса', async () => {
@@ -310,12 +321,12 @@ describe('RunsService', () => {
     const saved = settings.saveCliApiKey(secret);
     expect(saved).toEqual(
       expect.objectContaining({
-        connected: false,
         source: 'saved',
         hint: '••••alue',
         mode: 'cli',
       }),
     );
+    expect(saved.connected).toBe(saved.cliAgentAvailable);
     expect(JSON.stringify(saved)).not.toContain(secret);
     expect(settings.clear()).toEqual(
       expect.objectContaining({
@@ -331,7 +342,10 @@ describe('RunsService', () => {
     setCliAuthExecForTests(async (input) => {
       if (input.args[0] === 'status') {
         return {
-          stdout: JSON.stringify({ authenticated: true, email: 'dev@example.com' }),
+          stdout: JSON.stringify({
+            authenticated: true,
+            email: 'dev@example.com',
+          }),
           stderr: '',
           code: 0,
         };
@@ -355,9 +369,15 @@ describe('RunsService', () => {
         roleIds: ['agent_builder'],
         projectId,
       });
+      const waiting = await until(runs, started.id, 'waiting_access');
+      expect(waiting.status).toBe('waiting_access');
+      expect(waiting.pendingAccess?.kind).toBe('workspace');
+      runs.grantAccess(started.id, 'once');
       const done = await until(runs, started.id, 'completed');
       expect(done.status).toBe('completed');
-      expect(done.work.some((item) => item.output.includes('сессии'))).toBe(true);
+      expect(done.work.some((item) => item.output.includes('сессии'))).toBe(
+        true,
+      );
     } finally {
       setCliAuthExecForTests(null);
       setCursorCliExecForTests(null);
@@ -367,11 +387,28 @@ describe('RunsService', () => {
   });
 
   it('в режиме CLI вызывает подменённый agent без сети', async () => {
-    setCursorCliExecForTests(async () => ({
-      stdout: 'Ответ локального CLI.',
-      stderr: '',
-      code: 0,
-    }));
+    setCliAuthExecForTests(async () => ({ stdout: '', stderr: '', code: 1 }));
+    const args: string[][] = [];
+    const stream = [
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'Смотрю исходники.' }] },
+      }),
+      JSON.stringify({
+        type: 'tool_call',
+        subtype: 'started',
+        tool_call: { readToolCall: { args: { path: 'src/app.ts' } } },
+      }),
+      JSON.stringify({ type: 'result', result: 'Ответ локального CLI.' }),
+    ].join('\n');
+    setCursorCliExecForTests(async (input) => {
+      args.push(input.args);
+      return {
+        stdout: stream,
+        stderr: '',
+        code: 0,
+      };
+    });
     const previousBin = process.env.CURSOR_AGENT_BIN;
     try {
       const { runs, projectId, settings } = await make({ token: false });
@@ -385,10 +422,42 @@ describe('RunsService', () => {
         roleIds: ['agent_builder'],
         projectId,
       });
+      const waiting = await until(runs, started.id, 'waiting_access');
+      expect(waiting.status).toBe('waiting_access');
+      expect(waiting.pendingAccess?.path).toBe(directory);
+      runs.grantAccess(started.id, 'always');
       const done = await until(runs, started.id, 'completed');
       expect(done.status).toBe('completed');
-      expect(done.work.some((item) => item.output.includes('локального CLI'))).toBe(true);
+      expect(
+        done.work.some((item) => item.output.includes('локального CLI')),
+      ).toBe(true);
+      expect(
+        done.steps.some((step) =>
+          step.messages.some(
+            (message) =>
+              message.author === 'trace' && message.text.includes('src/app.ts'),
+          ),
+        ),
+      ).toBe(true);
+      expect(args[0]).toEqual([
+        '-p',
+        '--output-format',
+        'stream-json',
+        '--trust',
+        '--workspace',
+        directory,
+      ]);
+      expect(settings.connection().workspaceGrants).toContain(directory);
+
+      const again = runs.start('workflow_supervised', 'Повтор без вопроса', {
+        roleIds: ['agent_builder'],
+        projectId,
+      });
+      const second = await until(runs, again.id, 'completed');
+      expect(second.status).toBe('completed');
+      expect(second.status).not.toBe('waiting_access');
     } finally {
+      setCliAuthExecForTests(null);
       setCursorCliExecForTests(null);
       if (previousBin === undefined) delete process.env.CURSOR_AGENT_BIN;
       else process.env.CURSOR_AGENT_BIN = previousBin;
@@ -530,7 +599,9 @@ describe('RunsService', () => {
     ).toHaveLength(2);
     const known = new Set(done.steps.map((step) => step.stepId));
     const seen = new Set(
-      done.work.filter((item) => known.has(item.stepId)).map((item) => item.stepId),
+      done.work
+        .filter((item) => known.has(item.stepId))
+        .map((item) => item.stepId),
     );
     expect(seen.size).toBeLessThanOrEqual(done.steps.length);
     expect(seen.size).toBeLessThan(done.work.length);
@@ -929,9 +1000,11 @@ describe('RunsService', () => {
     const done = await until(runs, started.id, 'completed');
     expect(done.status).toBe('completed');
     const step = done.steps[0];
-    expect(step?.messages.some((item) => item.author === 'user' && item.text.includes('привет'))).toBe(
-      true,
-    );
+    expect(
+      step?.messages.some(
+        (item) => item.author === 'user' && item.text.includes('привет'),
+      ),
+    ).toBe(true);
     const roleText = step?.messages
       .filter((item) => item.author === 'role')
       .map((item) => item.text)
@@ -942,5 +1015,234 @@ describe('RunsService', () => {
     expect(roleText).not.toContain('.DS_Store');
     expect(done.finalResult).toContain('привет');
     expect(done.finalResult).not.toContain('Сам посмотрел проект');
+  });
+
+  function handmadeStep(
+    id: string,
+    kind: RunStep['kind'],
+    title: string,
+  ): RunStep {
+    return {
+      stepId: id,
+      agentId: id,
+      agentName: title,
+      title,
+      mode: 'automatic',
+      handoff: 'дальше',
+      instructions: 'делай',
+      harness: 'simulated',
+      skills: [],
+      dialogueId: id,
+      kind,
+      messages: [],
+      brief: null,
+      question: null,
+      mapAddition: null,
+      cliSessionId: id === 'step-open' ? 'sess-old' : null,
+    };
+  }
+
+  function interruptedRun(): Run {
+    const now = '2026-10-05T00:00:00.000Z';
+    return {
+      id: 'interrupted-1',
+      workflowId: 'workflow_supervised',
+      workflowName: 'Процесс',
+      task: 'Тихий режим',
+      status: 'interrupted',
+      stepIndex: 1,
+      steps: [
+        handmadeStep('step-done', 'analyst', 'Разбор'),
+        handmadeStep('step-open', 'developer', 'Сборка'),
+      ],
+      work: [
+        {
+          stepId: 'step-done',
+          agentId: 'step-done',
+          agentName: 'Разбор',
+          title: 'Разбор',
+          output: 'Уже готово',
+          summary: 'Уже готово',
+          startedAt: now,
+          finishedAt: now,
+        },
+      ],
+      events: [],
+      finalResult: null,
+      error: 'Сервер перезапустился, пока шаг «Сборка» ещё шёл.',
+      createdAt: now,
+      updatedAt: now,
+      finishedAt: null,
+      project: null,
+      developerShape: 'none',
+      pendingQuestion: null,
+      pendingAccess: null,
+      mapWritten: false,
+      mapNote: null,
+      deepThinking: false,
+      note: null,
+      plan: null,
+      buildText: null,
+      reviewText: null,
+      taskFolder: null,
+      archive: null,
+    };
+  }
+
+  async function reopen(): Promise<RunsService> {
+    if (!moduleRef) throw new Error('Модуль не открыт.');
+    await moduleRef.get(StoreService).whenSaved();
+    await moduleRef.close();
+    moduleRef = await Test.createTestingModule({
+      providers: [
+        RunsService,
+        ProjectsService,
+        WorkflowsService,
+        SettingsService,
+        StoreService,
+        { provide: DATA_PATH, useValue: join(directory, 'state.json') },
+      ],
+    }).compile();
+    return moduleRef.get(RunsService);
+  }
+
+  it('продолжает с прерванного шага и не повторяет готовую работу', async () => {
+    const { runs } = await make();
+    const store = moduleRef!.get(StoreService);
+    store.upsertRun(interruptedRun());
+    const resumed = runs.resume('interrupted-1', 'continue');
+    expect(resumed.status).toBe('running');
+    expect(
+      resumed.events.some((event) => event.message.includes('Продолжение')),
+    ).toBe(true);
+    const done = await until(runs, 'interrupted-1', 'completed');
+    expect(
+      done.work.filter((item) => item.stepId === 'step-done'),
+    ).toHaveLength(1);
+    expect(done.work.some((item) => item.stepId === 'step-open')).toBe(true);
+    expect(done.steps[1]?.cliSessionId).toBe('sess-old');
+  });
+
+  it('повтор шага сбрасывает id сессии и не принимает отказ владельца', async () => {
+    const { runs } = await make();
+    const store = moduleRef!.get(StoreService);
+    const open = interruptedRun();
+    store.upsertRun(open);
+    const retried = runs.resume(open.id, 'retry');
+    expect(
+      retried.events.some((event) => event.message.includes('Повтор')),
+    ).toBe(true);
+    const done = await until(runs, open.id, 'completed');
+    expect(done.steps[1]?.cliSessionId).toBeNull();
+    expect(
+      done.work.filter((item) => item.stepId === 'step-done'),
+    ).toHaveLength(1);
+
+    const stopped = interruptedRun();
+    stopped.id = 'stopped-1';
+    stopped.status = 'failed';
+    stopped.error = 'Владелец отклонил шаг.';
+    store.upsertRun(stopped);
+    expect(() => runs.resume(stopped.id, 'continue')).toThrow(/Продолжить/);
+  });
+
+  it('не продолжает, пока идёт другой запуск', async () => {
+    const { runs, projectId } = await make();
+    const store = moduleRef!.get(StoreService);
+    const started = runs.start('workflow_supervised', 'Тихий режим', {
+      projectId,
+    });
+    await until(runs, started.id, 'waiting_approval');
+    store.upsertRun(interruptedRun());
+    expect(() => runs.resume('interrupted-1', 'continue')).toThrow(
+      ConflictException,
+    );
+  });
+
+  it('после перезапуска подтверждение не гоняет шаг заново', async () => {
+    const { runs, projectId } = await make();
+    const started = runs.start(
+      'workflow_supervised',
+      'Тихий режим уведомлений',
+      {
+        projectId,
+      },
+    );
+    const waiting = await until(runs, started.id, 'waiting_approval');
+    expect(waiting.work).toHaveLength(3);
+    const runs2 = await reopen();
+    expect(runs2.get(started.id).status).toBe('waiting_approval');
+    runs2.decide(started.id, true);
+    const done = await until(runs2, started.id, 'completed');
+    expect(done.status).toBe('completed');
+    expect(done.work).toHaveLength(3);
+  });
+
+  it('пишет id сессии CLI на шаг до завершения процесса', async () => {
+    setCliAuthExecForTests((input) => {
+      if (input.args[0] === 'status') {
+        return Promise.resolve({
+          stdout: JSON.stringify({
+            authenticated: true,
+            email: 'dev@example.com',
+          }),
+          stderr: '',
+          code: 0,
+        });
+      }
+      return Promise.resolve({ stdout: '', stderr: '', code: 1 });
+    });
+    let release = () => undefined;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    setCursorCliExecForTests(async (input) => {
+      input.onChunk?.(
+        'stdout',
+        `${JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-live' })}\n`,
+      );
+      await hold;
+      input.onChunk?.(
+        'stdout',
+        `${JSON.stringify({ type: 'result', result: 'Ответ с сессией.' })}\n`,
+      );
+      return { stdout: '', stderr: '', code: 0 };
+    });
+    const previousBin = process.env.CURSOR_AGENT_BIN;
+    try {
+      const { runs, projectId, settings } = await make({ token: false });
+      const fakeAgent = join(directory, 'fake-agent');
+      await writeFile(fakeAgent, '#!/bin/sh\n');
+      await chmod(fakeAgent, 0o755);
+      process.env.CURSOR_AGENT_BIN = fakeAgent;
+      settings.setMode('cli');
+      const started = runs.start('workflow_supervised', 'Проверка сессии', {
+        roleIds: ['agent_builder'],
+        projectId,
+      });
+      const waiting = await until(runs, started.id, 'waiting_access');
+      runs.grantAccess(started.id, 'once');
+      let saved = runs.get(started.id);
+      for (
+        let attempt = 0;
+        attempt < 30 && saved.steps[0]?.cliSessionId !== 'sess-live';
+        attempt += 1
+      ) {
+        await settle();
+        saved = runs.get(started.id);
+      }
+      expect(saved.steps[0]?.cliSessionId).toBe('sess-live');
+      expect(saved.status).not.toBe('completed');
+      release();
+      const done = await until(runs, started.id, 'completed');
+      expect(done.steps[0]?.cliSessionId).toBe('sess-live');
+      expect(waiting.pendingAccess?.kind).toBe('workspace');
+    } finally {
+      release();
+      setCliAuthExecForTests(null);
+      setCursorCliExecForTests(null);
+      if (previousBin === undefined) delete process.env.CURSOR_AGENT_BIN;
+      else process.env.CURSOR_AGENT_BIN = previousBin;
+    }
   });
 });

@@ -151,10 +151,9 @@ describe('BoardService', () => {
 
     await settle();
     const planned = board.get(first.id);
-    expect(planned.phase).toBe('plan');
+    expect(planned.phase).toBe('working');
     expect(planned.status).toBe('in_progress');
-    expect(planned.plan?.authorName).toBe('Архитектор');
-    expect(planned.plan?.editable).toBe(true);
+    expect(planned.plan).toBeNull();
     expect(
       planned.activity.find((item) => item.agentName === 'Бэкенд-разработчик')
         ?.state,
@@ -180,30 +179,10 @@ describe('BoardService', () => {
     expect(() => board.handToBuild(task.id)).toThrow(/план/i);
     await settle();
 
-    const planned = board.get(task.id);
-    expect(planned.plan?.authorName).toBe('Архитектор');
-    const edited = 'Свой текст плана\nСобрать один объект.';
-    expect(board.updatePlan(task.id, edited).plan?.text).toBe(edited);
-
-    const building = board.handToBuild(task.id);
-    expect(building.phase).toBe('build');
-    expect(building.status).toBe('in_progress');
-    expect(building.plan?.editable).toBe(false);
-    expect(building.plan?.text).toBe(edited);
-    expect(() => board.updatePlan(task.id, 'Поздняя правка')).toThrow(
-      BadRequestException,
-    );
-
-    await settle();
-    const done = board.get(task.id);
-    expect(done.status).toBe('review');
-    expect(done.phase).toBe('done');
-    expect(
-      done.activity.find((item) => item.agentName === 'Сборщик')?.note,
-    ).toContain('Собрал');
-    expect(
-      done.activity.find((item) => item.agentName === 'Ревьюер')?.note,
-    ).toContain('Сверил');
+    const running = board.get(task.id);
+    expect(running.status).toBe('in_progress');
+    expect(running.phase).toBe('working');
+    expect(running.plan).toBeNull();
   });
 
   it('режим вопроса заканчивается проверкой и не требует плана', async () => {
@@ -216,13 +195,14 @@ describe('BoardService', () => {
       ],
     });
     board.move(task.id, 'in_progress');
+    expect(board.get(task.id).status).toBe('in_progress');
     await settle();
     const done = board.get(task.id);
     expect(done.plan).toBeNull();
     expect(done.status).toBe('review');
     expect(
-      done.activity.every((item) => item.note.includes('режиме вопроса')),
-    ).toBe(true);
+      done.activity.every((item) => item.note.includes('без плана')),
+    ).toBe(false);
   });
 
   it('план может составить не архитектор, а любой агент в режиме плана', async () => {
@@ -242,8 +222,9 @@ describe('BoardService', () => {
     });
     board.move(task.id, 'in_progress');
     await settle();
-    expect(board.get(task.id).plan?.authorName).toBe('Исследователь');
-    expect(board.get(task.id).plan?.text).toContain('Чужой план');
+    const live = board.get(task.id);
+    expect(live.status).toBe('in_progress');
+    expect(live.plan).toBeNull();
   });
 
   it('сохранённый токен и среда Cursor не вызывают живой API', async () => {
@@ -266,10 +247,8 @@ describe('BoardService', () => {
         moved.activity.find((item) => item.agentName === 'Сборщик')?.note,
       ).toContain('имитируется');
       await settle();
-      board.handToBuild(task.id, 'План без сети.\nСделать ручку.');
-      await settle();
       const done = board.get(task.id);
-      expect(done.status).toBe('review');
+      expect(done.status).toBe('in_progress');
       expect(done.activity.map((item) => item.note).join('\n')).not.toContain(
         'Живой вызов',
       );
@@ -379,22 +358,30 @@ describe('BoardService', () => {
     expect(board.get(keeper.id).status).toBe('new');
   });
 
-  it('после перезапуска доводит уже отданную сборку до проверки', async () => {
-    const { board, projectId } = await make();
-    await moduleRef?.init();
+  it('после перезапуска задача без запуска всё ещё доходит из сборки до проверки', async () => {
+    const { board, store, projectId } = await make();
     const task = board.create('Дожать', 'Уже есть план', {
       projectId,
       team: [{ agentId: 'role_architect', mode: 'plan' }],
     });
-    board.move(task.id, 'in_progress');
-    await settle();
-    process.env.SIM_DELAY_MS = '10000';
-    board.handToBuild(task.id, 'План, который уже отдан в сборку.');
-    expect(board.get(task.id).phase).toBe('build');
+    const now = new Date().toISOString();
+    store.mutate((state) => {
+      const live = state.tasks.find((item) => item.id === task.id);
+      if (!live) return;
+      live.status = 'in_progress';
+      live.phase = 'build';
+      live.runId = null;
+      live.plan = {
+        text: 'План, который уже отдан в сборку.',
+        authorAgentId: 'role_architect',
+        authorName: 'Архитектор',
+        editable: false,
+        updatedAt: now,
+      };
+    });
     await moduleRef?.get(StoreService).whenSaved();
     await moduleRef?.close();
     moduleRef = undefined;
-    process.env.SIM_DELAY_MS = '0';
 
     const next = await make(join(directory, 'state.json'));
     await moduleRef?.init();

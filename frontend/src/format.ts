@@ -5,8 +5,20 @@ export function statusLabel(status: RunStatus): string {
   if (status === 'waiting_approval') return 'Ждёт подтверждения'
   if (status === 'waiting_user') return 'Ждёт ответа'
   if (status === 'waiting_plan') return 'Можно править план'
+  if (status === 'waiting_access') return 'Ждёт доступа'
+  if (status === 'interrupted') return 'Прерван'
   if (status === 'completed') return 'Готово'
   return 'Ошибка'
+}
+
+/** Прерванный сервером запуск и ошибка шага. Отказ владельца и ручная остановка — нет. */
+export function canResumeRun(run: { status: RunStatus; error: string | null }): boolean {
+  if (run.status === 'interrupted') return true
+  if (run.status !== 'failed') return false
+  const error = run.error ?? ''
+  if (error.startsWith('Владелец ')) return false
+  if (error === 'Запуск остановлен.') return false
+  return true
 }
 
 export function isOpenRun(status: RunStatus): boolean {
@@ -14,7 +26,8 @@ export function isOpenRun(status: RunStatus): boolean {
     status === 'running' ||
     status === 'waiting_approval' ||
     status === 'waiting_user' ||
-    status === 'waiting_plan'
+    status === 'waiting_plan' ||
+    status === 'waiting_access'
   )
 }
 

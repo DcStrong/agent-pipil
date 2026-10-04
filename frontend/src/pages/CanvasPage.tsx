@@ -2,15 +2,18 @@
 import { LayoutGroup, motion } from 'motion/react'
 import { useEffect, useState } from 'react'
 import { api, messageOf } from '../api'
+import { AccessPrompt } from '../components/AccessPrompt'
+import { DialogueLines, dialogueIsRunning } from '../components/DialogueLines'
 import { DarkSelect } from '../components/DarkSelect'
 import { TaskExamples, type ExampleId } from '../components/TaskExamples'
+import { ResumeRun } from '../components/ResumeRun'
 import { TaskOrderPanel } from '../components/TaskOrderPanel'
-import { finalText, isOpenRun, statusLabel, taskTitle } from '../format'
+import { canResumeRun, finalText, isOpenRun, statusLabel, taskTitle } from '../format'
 import { useLive } from '../live'
 import { href } from '../route'
 import { hasCycle, materialize, orderSteps, withHandoffs } from '../step-graph'
 import { v4 as uuidv4 } from 'uuid'
-import type { Agent, AgentKind, Run, StepMode, TaskPlan, Workflow, WorkflowStep } from '../types'
+import type { AccessDecision, Agent, AgentKind, Run, StepMode, TaskPlan, Workflow, WorkflowStep } from '../types'
 import {
   isWorkflowDraft,
   loadWorkflowDraft,
@@ -400,12 +403,38 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
     }
   }
 
+  async function grant(decision: AccessDecision) {
+    if (!live) return
+    setBusy(true)
+    setError(null)
+    try {
+      upsertRun(await api.grantAccess(live.id, decision))
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function decide(decision: 'approve' | 'reject') {
     if (!live) return
     setBusy(true)
     setError(null)
     try {
       upsertRun(await api.decide(live.id, decision))
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function resumeShown(mode: 'continue' | 'retry') {
+    if (!shown || !canResumeRun(shown)) return
+    setBusy(true)
+    setError(null)
+    try {
+      upsertRun(await api.resumeRun(shown.id, mode))
     } catch (reason) {
       setError(messageOf(reason))
     } finally {
@@ -647,16 +676,13 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
         {openedStep ? (
           <section className="dialogue" data-testid="dialogue">
             <h2>Диалог · {openedStep.title}</h2>
-            {openedStep.messages.length === 0 ? (
-              <p className="hint" data-testid="dialogue-empty">
-                Реплик пока нет. Это диалог выбранной роли.
-              </p>
-            ) : null}
-            {openedStep.messages.map((message) => (
-              <p key={message.id} className={`bubble ${message.author}`}>
-                {message.text}
-              </p>
-            ))}
+            <DialogueLines
+              messages={openedStep.messages}
+              running={dialogueIsRunning(
+                live?.status,
+                live?.stepIndex != null && live.steps[live.stepIndex]?.stepId === openedStep.stepId,
+              )}
+            />
           </section>
         ) : (
           <p className="hint" data-testid="dialogue-hint">
@@ -672,6 +698,9 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
             .
             {shown.mapNote ? ` ${shown.mapNote}` : ''}
           </p>
+        ) : null}
+        {live?.status === 'waiting_access' ? (
+          <AccessPrompt run={live} busy={busy} onDecide={(decision) => void grant(decision)} />
         ) : null}
         {live?.status === 'waiting_approval' ? (
           <div className="decision" data-testid="run-wait">
@@ -692,7 +721,11 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
             <p>{finalText(shown.finalResult)}</p>
           </article>
         ) : null}
-        {shown?.status === 'failed' && shown.error ? <p className="error-line">{shown.error}</p> : null}
+        {shown && canResumeRun(shown) ? (
+          <ResumeRun run={shown} busy={busy} onResume={(mode) => void resumeShown(mode)} />
+        ) : shown?.status === 'failed' && shown.error ? (
+          <p className="error-line">{shown.error}</p>
+        ) : null}
         {error ? <p className="error-line">{error}</p> : null}
         {selectedStep ? (
           <section className="editor">
@@ -889,6 +922,8 @@ function Branch({
             ? 'Ждёт подтверждения'
             : live.status === 'waiting_user'
               ? 'Ждёт ответа'
+              : live.status === 'waiting_access'
+                ? 'Ждёт доступа'
               : live.status === 'waiting_plan'
                 ? 'Можно править план'
                 : 'Выполняется'}
