@@ -32,6 +32,7 @@ import {
   type PieceMode,
 } from './task-order';
 import { recordCursorStepUsage } from './cursor-usage';
+import { retryStepNote } from './task-text';
 
 export function readDelayMs(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env.SIM_DELAY_MS;
@@ -63,6 +64,21 @@ function say(step: RunStep, author: DialogueAuthor, text: string): void {
     author,
     text,
   });
+}
+
+function failureLine(message: string): string {
+  const trimmed = message.trim();
+  return trimmed.startsWith('Ошибка:') ? trimmed : `Ошибка: ${trimmed}`;
+}
+
+function recordFailureDialogue(run: Run, message: string): void {
+  const index = run.stepIndex;
+  if (index === null || index < 0 || index >= run.steps.length) return;
+  const step = run.steps[index];
+  const last = step.messages[step.messages.length - 1];
+  const line = failureLine(message);
+  if (last?.text === line) return;
+  say(step, 'role', line);
 }
 
 function contextFor(run: Run, index: number): AgentContext {
@@ -175,12 +191,19 @@ export class Orchestrator {
       resolveCliAuth?: () => Promise<{ ready: boolean; apiKey: string | null }>;
       projectFolder: string | null;
       workspaceFile: string | null;
+      startAtStep?: number;
+      retryError?: string | null;
     },
   ): Promise<void> {
     this.liveRuns.set(run.id, run);
     try {
       if (run.deepThinking) {
-        await this.executeDeep(run, publish, options.delayMs ?? readDelayMs());
+        await this.executeDeep(
+          run,
+          publish,
+          options.delayMs ?? readDelayMs(),
+          Boolean(options.retryError),
+        );
         return;
       }
       await this.executeSteps(run, publish, options);
@@ -205,13 +228,21 @@ export class Orchestrator {
       resolveCliAuth?: () => Promise<{ ready: boolean; apiKey: string | null }>;
       projectFolder: string | null;
       workspaceFile: string | null;
+      startAtStep?: number;
+      retryError?: string | null;
     },
   ): Promise<void> {
     const delayMs = options.delayMs ?? readDelayMs();
     const tell = () => publish(structuredClone(run));
-    let incoming: HandoffBrief | null = null;
+    const startAt = Math.max(
+      0,
+      Math.min(options.startAtStep ?? 0, Math.max(0, run.steps.length - 1)),
+    );
+    let incoming: HandoffBrief | null =
+      startAt > 0 ? (run.steps[startAt - 1]?.brief ?? null) : null;
+    let retryError = options.retryError ?? null;
     try {
-      let index = 0;
+      let index = startAt;
       let guard = 0;
       while (index < run.steps.length) {
         guard += 1;
@@ -225,8 +256,9 @@ export class Orchestrator {
           incoming,
           tell,
           delayMs,
-          options,
+          { ...options, retryError: index === startAt ? retryError : null },
         );
+        if (index === startAt) retryError = null;
         if (run.status === 'failed' || this.halted.has(run.id)) return;
         const sendBack =
           step.kind === 'tester' &&
@@ -276,6 +308,7 @@ export class Orchestrator {
       run.pendingQuestion = null;
       run.error =
         error instanceof Error ? error.message : 'Шаг завершился ошибкой.';
+      recordFailureDialogue(run, run.error);
       run.finishedAt = failedAt;
       run.updatedAt = failedAt;
       run.events.push({
@@ -303,6 +336,8 @@ export class Orchestrator {
       resolveCliAuth?: () => Promise<{ ready: boolean; apiKey: string | null }>;
       projectFolder: string | null;
       workspaceFile: string | null;
+      startAtStep?: number;
+      retryError?: string | null;
     },
   ): Promise<HandoffBrief | null> {
     if (this.halted.has(run.id)) {
@@ -388,6 +423,21 @@ export class Orchestrator {
         }
         cliApiKey = cliAuth.apiKey;
       }
+      const retrying = Boolean(options.retryError?.trim());
+      const resumeChatId = step.cliChatId?.trim() || null;
+      const retryNote = retrying
+        ? resumeChatId
+          ? `Продолжи тот же диалог. ${options.retryError?.trim() ?? ''}`.trim()
+          : retryStepNote({
+              stepTitle: step.title,
+              error: options.retryError ?? null,
+              priorWork: run.work.map((item) => ({
+                title: item.title,
+                agentName: item.agentName,
+                summary: item.summary,
+              })),
+            })
+        : null;
       const stepInput = {
         token: options.cursorToken ?? '',
         task: run.task,
@@ -397,6 +447,8 @@ export class Orchestrator {
         skills: step.skills,
         projectFolder: options.projectFolder,
         workspaceFile: options.workspaceFile,
+        resumeChatId: retrying ? resumeChatId : null,
+        retryNote,
       };
       const cursorResult =
         options.cursorMode === 'cli'
@@ -425,6 +477,9 @@ export class Orchestrator {
           },
           cursorResult.usageCapture,
         );
+      }
+      if (cursorResult.cliChatId?.trim()) {
+        step.cliChatId = cursorResult.cliChatId.trim();
       }
       tell();
       first = {
@@ -665,108 +720,130 @@ export class Orchestrator {
     run: Run,
     publish: (run: Run) => void,
     delayMs: number,
+    resumeAfterFailure = false,
   ): Promise<void> {
     const tell = () => publish(structuredClone(run));
     try {
       const started = new Date().toISOString();
       run.status = 'running';
       run.updatedAt = started;
-      run.events.push({
-        id: randomUUID(),
-        at: started,
-        kind: 'progress',
-        message: 'Глубокое мышление: сначала короткая заметка, затем план.',
-        stepIndex: null,
-      });
-      tell();
-
-      const note = lookNote(run.task, run.project);
-      run.note = note;
-      const noted = await this.showPiece(
-        run,
-        'ask',
-        note,
-        'Короткая заметка: что уже есть в проекте.',
-        tell,
-        delayMs,
-      );
-      if (!noted) return;
-
-      run.plan = draftPlan(run.task);
-      this.persistPieces(run);
-      const planIndex = run.steps.findIndex((step) => step.mode === 'plan');
-      const waitingAt = new Date().toISOString();
-      run.status = 'waiting_plan';
-      run.stepIndex = planIndex >= 0 ? planIndex : null;
-      run.pendingQuestion = null;
-      run.updatedAt = waitingAt;
-      run.events.push({
-        id: randomUUID(),
-        at: waitingAt,
-        kind: 'progress',
-        message: 'План из четырёх частей можно поправить перед сборкой.',
-        stepIndex: run.stepIndex,
-      });
-      tell();
-
-      const edited = await new Promise<TaskPlan>((resolve) => {
-        this.plans.set(run.id, resolve);
-      });
-      if (this.halted.has(run.id)) {
-        this.markHalted(run);
+      if (!resumeAfterFailure || !run.note) {
+        run.events.push({
+          id: randomUUID(),
+          at: started,
+          kind: 'progress',
+          message: 'Глубокое мышление: сначала короткая заметка, затем план.',
+          stepIndex: null,
+        });
         tell();
-        return;
+
+        const note = lookNote(run.task, run.project);
+        run.note = note;
+        const noted = await this.showPiece(
+          run,
+          'ask',
+          note,
+          'Короткая заметка: что уже есть в проекте.',
+          tell,
+          delayMs,
+        );
+        if (!noted) return;
       }
-      run.plan = edited;
-      this.persistPieces(run);
-      const acceptedAt = new Date().toISOString();
-      run.updatedAt = acceptedAt;
-      run.events.push({
-        id: randomUUID(),
-        at: acceptedAt,
-        kind: 'progress',
-        message: 'План принят. Сборка берёт его в контекст.',
-        stepIndex: planIndex >= 0 ? planIndex : null,
-      });
-      const planned = await this.showPiece(
-        run,
-        'plan',
-        formatPlan(edited),
-        'План записан в папку задачи.',
-        tell,
-        delayMs,
-      );
-      if (!planned) return;
 
-      const built = buildFromPlan(edited);
-      run.buildText = built;
-      const assembled = await this.showPiece(
-        run,
-        'build',
-        built,
-        'Сборка идёт по чеклисту.',
-        tell,
-        delayMs,
-      );
-      if (!assembled) return;
+      const planIndex = run.steps.findIndex((step) => step.mode === 'plan');
+      let edited = run.plan;
+      if (!edited) {
+        run.plan = draftPlan(run.task);
+        this.persistPieces(run);
+        const waitingAt = new Date().toISOString();
+        run.status = 'waiting_plan';
+        run.stepIndex = planIndex >= 0 ? planIndex : null;
+        run.pendingQuestion = null;
+        run.updatedAt = waitingAt;
+        run.events.push({
+          id: randomUUID(),
+          at: waitingAt,
+          kind: 'progress',
+          message: 'План из четырёх частей можно поправить перед сборкой.',
+          stepIndex: run.stepIndex,
+        });
+        tell();
 
-      const review = reviewAgainst(edited, built);
-      run.reviewText = review;
-      const reviewed = await this.showPiece(
-        run,
-        'review',
-        review,
-        'Сверка идёт по чеклисту.',
-        tell,
-        delayMs,
-      );
-      if (!reviewed) return;
+        edited = await new Promise<TaskPlan>((resolve) => {
+          this.plans.set(run.id, resolve);
+        });
+        if (this.halted.has(run.id)) {
+          this.markHalted(run);
+          tell();
+          return;
+        }
+        run.plan = edited;
+        this.persistPieces(run);
+        const acceptedAt = new Date().toISOString();
+        run.updatedAt = acceptedAt;
+        run.events.push({
+          id: randomUUID(),
+          at: acceptedAt,
+          kind: 'progress',
+          message: 'План принят. Сборка берёт его в контекст.',
+          stepIndex: planIndex >= 0 ? planIndex : null,
+        });
+        const planned = await this.showPiece(
+          run,
+          'plan',
+          formatPlan(edited),
+          'План записан в папку задачи.',
+          tell,
+          delayMs,
+        );
+        if (!planned) return;
+      } else if (!run.buildText) {
+        const planned = await this.showPiece(
+          run,
+          'plan',
+          formatPlan(edited),
+          'План уже был, продолжаем сборку.',
+          tell,
+          delayMs,
+        );
+        if (!planned) return;
+      }
+
+      if (!run.buildText) {
+        const built = buildFromPlan(edited);
+        run.buildText = built;
+        const assembled = await this.showPiece(
+          run,
+          'build',
+          built,
+          'Сборка идёт по чеклисту.',
+          tell,
+          delayMs,
+        );
+        if (!assembled) return;
+      }
+
+      if (!run.reviewText) {
+        const review = reviewAgainst(edited, run.buildText ?? '');
+        run.reviewText = review;
+        const reviewed = await this.showPiece(
+          run,
+          'review',
+          review,
+          'Сверка идёт по чеклисту.',
+          tell,
+          delayMs,
+        );
+        if (!reviewed) return;
+      }
 
       const ended = new Date().toISOString();
+      const buildText = run.buildText ?? '';
+      const reviewText = run.reviewText ?? '';
       run.archive = {
-        note,
+        note: run.note ?? lookNote(run.task, run.project),
         plan: edited,
-        result: archiveResult(built, review),
+        result: archiveResult(buildText, reviewText),
         at: ended,
         folder: null,
       };
@@ -800,6 +877,7 @@ export class Orchestrator {
       run.pendingQuestion = null;
       run.error =
         error instanceof Error ? error.message : 'Шаг завершился ошибкой.';
+      recordFailureDialogue(run, run.error);
       run.finishedAt = failedAt;
       run.updatedAt = failedAt;
       run.events.push({
@@ -875,6 +953,7 @@ export class Orchestrator {
     const at = new Date().toISOString();
     run.status = 'failed';
     run.error = reason;
+    recordFailureDialogue(run, reason);
     run.pendingQuestion = null;
     run.finishedAt = at;
     run.updatedAt = at;

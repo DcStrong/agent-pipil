@@ -426,6 +426,19 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
     }
   }
 
+  async function retryShownRun() {
+    if (!shown || shown.status !== 'failed') return
+    setBusy(true)
+    setError(null)
+    try {
+      upsertRun(await api.retryRun(shown.id))
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   function continueLive() {
     if (!live) return
     if (live.status === 'running') {
@@ -692,7 +705,23 @@ export function CanvasPage({ workflowId }: { workflowId: string }) {
             <p>{finalText(shown.finalResult)}</p>
           </article>
         ) : null}
-        {shown?.status === 'failed' && shown.error ? <p className="error-line">{shown.error}</p> : null}
+        {shown?.status === 'failed' ? (
+          <div className="decision" data-testid="run-retry">
+            <p>Запуск прервался. Готовые шаги сохранены — можно продолжить с места сбоя.</p>
+            {shown.error ? <p className="error-line">{shown.error}</p> : null}
+            <div className="row-actions">
+              <button
+                type="button"
+                className="primary decision-btn"
+                data-testid="retry-run"
+                disabled={busy}
+                onClick={() => void retryShownRun()}
+              >
+                Повторить
+              </button>
+            </div>
+          </div>
+        ) : null}
         {error ? <p className="error-line">{error}</p> : null}
         {selectedStep ? (
           <section className="editor">

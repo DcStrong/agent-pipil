@@ -150,6 +150,7 @@ export const api = {
       body: JSON.stringify({ decision }),
     }),
   stop: (id: string) => request<Run>(`/api/runs/${id}/stop`, { method: 'POST' }),
+  retryRun: (id: string) => request<Run>(`/api/runs/${id}/retry`, { method: 'POST' }),
   cursor: () => request<CursorConnection>('/api/settings/cursor'),
   startCursorCliLogin: () =>
     request<CursorConnection>('/api/settings/cursor/cli/login', { method: 'POST' }),

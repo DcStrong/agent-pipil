@@ -9,8 +9,15 @@ import {
   type CursorStepInput,
   type CursorStepResult,
 } from './cursor-client';
+import { buildAgentCliArgs } from './cursor-cli-args';
+import {
+  parseAgentIdFromCliOutput,
+  parseRunIdFromCliOutput,
+} from './cursor-cli-usage-parse';
 import { spawnAgentProcess } from './cursor-cli-spawn';
 import { fetchCliCursorStepUsage } from './cursor-sdk-usage';
+
+export { setAgentHelpTextForTests } from './cursor-cli-args';
 
 export const CURSOR_CLI_MISSING_AUTH_MESSAGE =
   'Нельзя выполнить шаг Cursor: нет входа в CLI и не задан CURSOR_API_KEY. Нажмите «Войти через Cursor» в настройках или сохраните ключ.';
@@ -161,7 +168,11 @@ export async function runCursorCliStep(
   const cwd =
     input.projectFolder?.trim() ||
     (input.workspaceFile?.trim() ? dirname(input.workspaceFile.trim()) : process.cwd());
-  const args = ['-p', '--workspace', workspace];
+  const args = buildAgentCliArgs(
+    binary,
+    { workspace, resumeChatId: input.resumeChatId ?? null },
+    env,
+  );
   const execFn = execForTests ?? defaultExec;
   const result = await execFn({
     binary,
@@ -185,11 +196,15 @@ export async function runCursorCliStep(
     result.stderr,
     spawnEnv.CURSOR_API_KEY ?? cliApiKey,
   );
+  const blob = `${result.stdout}\n${result.stderr}`;
+  const cliChatId =
+    parseRunIdFromCliOutput(blob) ?? parseAgentIdFromCliOutput(blob);
   return {
     agentId: 'local-cli',
     runId: 'local-cli',
     text,
     agentUrl: null,
     usageCapture,
+    cliChatId,
   };
 }

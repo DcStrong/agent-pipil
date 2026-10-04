@@ -153,6 +153,8 @@ export interface RunStep {
   brief: HandoffBrief | null;
   question: string | null;
   mapAddition: string | null;
+  /** Id чата CLI для `--resume`, если шаг уже вызывал agent. */
+  cliChatId: string | null;
 }
 
 export interface StepWork {
@@ -956,6 +958,10 @@ function parseRunStep(value: unknown): RunStep {
     question: typeof value.question === 'string' ? value.question : null,
     mapAddition:
       typeof value.mapAddition === 'string' ? value.mapAddition : null,
+    cliChatId:
+      typeof value.cliChatId === 'string' && value.cliChatId.trim()
+        ? value.cliChatId.trim()
+        : null,
   };
 }
 

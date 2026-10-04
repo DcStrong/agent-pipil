@@ -141,6 +141,11 @@ export class RunsController {
     return this.runs.stop(id);
   }
 
+  @Post(':id/retry')
+  retry(@Param('id') id: string): Run {
+    return this.runs.retry(id);
+  }
+
   @Post(':id/decision')
   decide(@Param('id') id: string, @Body() body: unknown): Run {
     if (typeof body !== 'object' || body === null || Array.isArray(body)) {
