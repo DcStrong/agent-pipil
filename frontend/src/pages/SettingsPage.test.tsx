@@ -109,7 +109,7 @@ describe('SettingsPage CLI login', () => {
     })
   })
 
-  it('после success GET убирает «Ожидание входа…»', async () => {
+  it('после success GET убирает «Ожидание входа…» и показывает готовность', async () => {
     mount(
       cliCursor({
         connected: true,
@@ -121,6 +121,9 @@ describe('SettingsPage CLI login', () => {
     )
     expect(screen.getByTestId('cli-login-start').textContent).toBe('Войти через Cursor')
     expect(screen.getByText('Вход выполнен.')).toBeTruthy()
+    expect(
+      screen.getByText(/Вы успешно авторизовались как dev@example.com\. CLI готов к работе\./),
+    ).toBeTruthy()
   })
 
   it('заблокированный popup не роняет вход', async () => {

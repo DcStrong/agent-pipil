@@ -30,8 +30,22 @@ export function SettingsPage() {
     const result = navigateLoginTab(loginTabRef.current, loginUrl, openedLoginUrlRef.current)
     if (result === 'navigated') {
       openedLoginUrlRef.current = loginUrl
+      setNote('Открыта вкладка Cursor для входа на этой машине.')
+    } else if (result === 'closed' || result === 'no-window') {
+      setNote(
+        'Ссылка для входа готова — откройте её ниже вручную на той же машине, где работает backend.',
+      )
     }
   }, [loginPending, loginUrl])
+
+  useEffect(() => {
+    if (mode !== 'cli' || cursor?.cliLogin.status !== 'success') return
+    setNote(
+      cursor.cliAccountLabel
+        ? `Вы успешно авторизовались как ${cursor.cliAccountLabel}. CLI готов к работе.`
+        : 'Вы успешно авторизовались. CLI готов к работе.',
+    )
+  }, [mode, cursor?.cliLogin.status, cursor?.cliAccountLabel])
 
   async function save(event: FormEvent) {
     event.preventDefault()
@@ -94,6 +108,11 @@ export function SettingsPage() {
         setNote(next.cliLogin.message ?? 'Запущен вход через CLI…')
       }
     } catch (reason) {
+      try {
+        loginTabRef.current?.close()
+      } catch {
+        // ignore
+      }
       loginTabRef.current = null
       setError(messageOf(reason))
     }
