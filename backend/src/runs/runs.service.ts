@@ -12,7 +12,7 @@ import { roleOrder } from '../domain';
 import { orderSteps } from '../runtime/step-graph';
 import { CursorClient } from '../runtime/cursor-client';
 import { Orchestrator, readDelayMs } from '../runtime/orchestrator';
-import { inspectProject } from '../runtime/project-folder';
+import { projectRootForRun } from '../runtime/saved-project';
 import { ProjectsService } from '../projects/projects.service';
 import { SettingsService } from '../settings/settings.service';
 import { StoreService } from '../store/store.service';
@@ -134,6 +134,41 @@ export class RunsService {
       archive: null,
     };
     this.store.upsertRun(run);
+    void this.runOrchestrator(run, 0, null, {
+      projectFolder: snapshot.folder,
+      workspaceFile: snapshot.workspaceFile,
+    });
+    return this.store.getRun(run.id) ?? run;
+  }
+
+  private resumeStepIndex(run: Run): number {
+    if (
+      run.stepIndex !== null &&
+      run.stepIndex >= 0 &&
+      run.stepIndex < run.steps.length
+    ) {
+      return run.stepIndex;
+    }
+    const finished = new Set(run.work.map((item) => item.stepId));
+    const firstOpen = run.steps.findIndex((step) => !finished.has(step.stepId));
+    if (firstOpen >= 0) return firstOpen;
+    return Math.max(0, run.steps.length - 1);
+  }
+
+  private runOrchestrator(
+    run: Run,
+    startAtStep: number,
+    retryError: string | null,
+    paths?: { projectFolder: string | null; workspaceFile: string | null },
+  ): void {
+    let projectFolder = paths?.projectFolder ?? run.project?.folder ?? null;
+    let workspaceFile = paths?.workspaceFile ?? null;
+    if (!paths && projectFolder) {
+      const saved = this.findSavedProjectForFolder(projectFolder);
+      if (saved?.kind === 'workspace') {
+        workspaceFile = saved.path;
+      }
+    }
     const cursorMode = this.settings.connectionMode();
     const cursorConnected = this.settings.cursorReady();
     const live =
@@ -160,12 +195,23 @@ export class RunsService {
               apiKey: this.settings.cliApiKey(),
             };
           },
-          projectFolder: snapshot.folder,
-          workspaceFile: snapshot.workspaceFile,
+          projectFolder,
+          workspaceFile,
+          startAtStep,
+          retryError,
         },
       )
       .catch(() => undefined);
-    return this.store.getRun(run.id) ?? run;
+  }
+
+  private findSavedProjectForFolder(folder: string) {
+    return this.store.read().projects.find((item) => {
+      try {
+        return projectRootForRun(item) === folder || item.path === folder;
+      } catch {
+        return false;
+      }
+    });
   }
 
   decide(id: string, approved: boolean): Run {
@@ -221,6 +267,40 @@ export class RunsService {
     if (!accepted) {
       throw new BadRequestException('План уже некому передать.');
     }
+    return this.get(id);
+  }
+
+  /** Продолжает неуспешный запуск с шага обрыва, не затирая готовые шаги. */
+  retry(id: string): Run {
+    const current = this.get(id);
+    if (current.status !== 'failed') {
+      throw new BadRequestException(
+        'Повтор доступен только для запуска с ошибкой.',
+      );
+    }
+    if (this.store.hasActiveRun() || this.orchestrator.peek(id)) {
+      throw new ConflictException('Сейчас уже идёт один запуск.');
+    }
+    const startAt = this.resumeStepIndex(current);
+    const step = current.steps[startAt];
+    const savedError = current.error;
+    const now = new Date().toISOString();
+    current.status = 'running';
+    current.error = null;
+    current.finishedAt = null;
+    current.pendingQuestion = null;
+    current.updatedAt = now;
+    current.events.push({
+      id: randomUUID(),
+      at: now,
+      kind: 'progress',
+      message: step
+        ? `Повтор шага «${step.title}». Готовые шаги сохранены.`
+        : 'Повтор запуска с места обрыва.',
+      stepIndex: startAt,
+    });
+    this.store.upsertRun(current);
+    void this.runOrchestrator(current, startAt, savedError);
     return this.get(id);
   }
 
@@ -346,6 +426,7 @@ export class RunsService {
       brief: null,
       question: null,
       mapAddition: null,
+      cliChatId: null,
     };
   }
 

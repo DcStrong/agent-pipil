@@ -64,6 +64,19 @@ export function RunPage({ runId }: { runId: string }) {
     }
   }
 
+  async function retryRun() {
+    if (!run) return
+    setBusy(true)
+    setError(null)
+    try {
+      upsertRun(await api.retryRun(run.id))
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   if (!ready) {
     return (
       <div className="page">
@@ -186,7 +199,25 @@ export function RunPage({ runId }: { runId: string }) {
             <p>{finalText(run.finalResult)}</p>
           </article>
         ) : null}
-        {run.error ? <p className="error-line">{run.error}</p> : null}
+        {run.status === 'failed' ? (
+          <div className="decision" data-testid="run-retry">
+            <p>Запуск прервался. Готовые шаги сохранены — можно продолжить с места сбоя.</p>
+            {run.error ? <p className="error-line">{run.error}</p> : null}
+            <div className="row-actions">
+              <button
+                type="button"
+                className="primary decision-btn"
+                data-testid="retry-run"
+                disabled={busy}
+                onClick={() => void retryRun()}
+              >
+                Повторить
+              </button>
+            </div>
+          </div>
+        ) : (
+          run.error ? <p className="error-line">{run.error}</p> : null
+        )}
         {error ? <p className="error-line">{error}</p> : null}
       </section>
       <aside className="details">

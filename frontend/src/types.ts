@@ -171,6 +171,7 @@ export interface RunStep {
   brief: HandoffBrief | null
   question: string | null
   mapAddition: string | null
+  cliChatId: string | null
 }
 
 export interface Run {

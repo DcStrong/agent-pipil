@@ -260,6 +260,86 @@ describe('RunsService', () => {
     expect(() => runs.stop(started.id)).toThrow('уже закончен');
   });
 
+  it('повтор неуспешного запуска продолжает с шага обрыва', async () => {
+    const { runs } = await make();
+    const started = runs.start(
+      'workflow_supervised',
+      'Нужен массив объектов заказов',
+      { roleIds: ['role_architect', 'role_developer'] },
+    );
+    await until(runs, started.id, 'waiting_user');
+    const stopped = runs.stop(started.id);
+    expect(stopped.status).toBe('failed');
+    await settle();
+    const workBefore = stopped.work.length;
+    const retried = runs.retry(started.id);
+    expect(retried.status).toBe('running');
+    expect(retried.error).toBeNull();
+    const waitingAgain = await until(runs, retried.id, 'waiting_user');
+    expect(waitingAgain.status).toBe('waiting_user');
+    runs.answer(retried.id, 'Массив объектов');
+    const done = await until(runs, retried.id, 'completed');
+    expect(done.status).toBe('completed');
+    expect(done.work.length).toBeGreaterThanOrEqual(workBefore);
+  });
+
+  it('повтор после ошибки CLI сохраняет готовые шаги и показывает stderr', async () => {
+    let calls = 0;
+    setCursorCliExecForTests(async () => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          stdout: '',
+          stderr: 'Workspace Trust Required: pass --trust',
+          code: 1,
+        };
+      }
+      return {
+        stdout: 'run-deadbeef\nОтвет после повтора.',
+        stderr: '',
+        code: 0,
+      };
+    });
+    setCliAuthExecForTests(async (input) => {
+      if (input.args[0] === 'status') {
+        return {
+          stdout: JSON.stringify({ authenticated: true, email: 'dev@example.com' }),
+          stderr: '',
+          code: 0,
+        };
+      }
+      return { stdout: '', stderr: '', code: 1 };
+    });
+    const previousBin = process.env.CURSOR_AGENT_BIN;
+    try {
+      const { runs, projectId, settings } = await make({ token: false });
+      const fakeAgent = join(directory, 'fake-agent');
+      await writeFile(fakeAgent, '#!/bin/sh\n');
+      await chmod(fakeAgent, 0o755);
+      process.env.CURSOR_AGENT_BIN = fakeAgent;
+      settings.setMode('cli');
+      const started = runs.start('workflow_supervised', 'CLI retry', {
+        roleIds: ['agent_builder'],
+        projectId,
+      });
+      const failed = await until(runs, started.id, 'failed');
+      expect(failed.error).toContain('Trust');
+      expect(failed.steps[0]?.messages.some((m) => m.text.includes('Trust'))).toBe(
+        true,
+      );
+      const retried = runs.retry(failed.id);
+      expect(retried.status).toBe('running');
+      const done = await until(runs, retried.id, 'completed');
+      expect(done.work.some((item) => item.output.includes('повтора'))).toBe(true);
+      expect(calls).toBe(2);
+    } finally {
+      setCliAuthExecForTests(null);
+      setCursorCliExecForTests(null);
+      if (previousBin === undefined) delete process.env.CURSOR_AGENT_BIN;
+      else process.env.CURSOR_AGENT_BIN = previousBin;
+    }
+  });
+
   it('не стартует со средой Cursor без projectId', async () => {
     const { runs, settings } = await make();
     settings.save('cursor_test_token_value');

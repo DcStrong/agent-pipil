@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import {
   resolveAgentBinary,
   runCursorCliStep,
+  setAgentHelpTextForTests,
   setCursorCliExecForTests,
 } from './cursor-cli';
 
@@ -21,12 +22,14 @@ describe('runCursorCliStep', () => {
 
   afterEach(async () => {
     setCursorCliExecForTests(null);
+    setAgentHelpTextForTests(null);
     if (directory) await rm(directory, { recursive: true, force: true });
     if (previousBin === undefined) delete process.env.CURSOR_AGENT_BIN;
     else process.env.CURSOR_AGENT_BIN = previousBin;
   });
 
   it('вызывает agent -p --workspace с подменённым exec и CURSOR_API_KEY', async () => {
+    setAgentHelpTextForTests('--trust\n--resume');
     const calls: Array<{
       binary: string;
       args: string[];
@@ -58,7 +61,12 @@ describe('runCursorCliStep', () => {
     );
     expect(result.text).toContain('CLI');
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.args).toEqual(['-p', '--workspace', directory]);
+    expect(calls[0]?.args).toEqual([
+      '-p',
+      '--workspace',
+      directory,
+      '--trust',
+    ]);
     expect(calls[0]?.prompt).toContain('README');
     expect(calls[0]?.env.CURSOR_API_KEY).toBe('cursor_cli_secret_key');
   });

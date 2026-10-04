@@ -89,6 +89,7 @@ const run: Run = {
   reviewText: null,
   taskFolder: null,
   archive: null,
+  cliChatId: null,
 }
 
 function liveState() {

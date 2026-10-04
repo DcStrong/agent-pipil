@@ -23,6 +23,29 @@ export function splitRunTask(task: string): { title: string; body: string } {
   return { title: trimmed, body: '' };
 }
 
+/** Текст для повторного вызова шага, если CLI не может `--resume`. */
+export function retryStepNote(input: {
+  stepTitle: string;
+  error: string | null;
+  priorWork: Array<{ title: string; agentName: string; summary: string }>;
+}): string {
+  const lines = [
+    `Шаг «${input.stepTitle}» прервался и запускается снова.`,
+  ];
+  if (input.error?.trim()) {
+    lines.push(`Последняя ошибка: ${input.error.trim()}`);
+  }
+  const done = input.priorWork.filter((item) => item.summary.trim());
+  if (done.length > 0) {
+    lines.push('', 'Уже завершено в этом запуске (не повторяй без нужды):');
+    for (const item of done) {
+      lines.push(`- ${item.agentName} · ${item.title}: ${item.summary.trim()}`);
+    }
+  }
+  lines.push('', 'Продолжи с места обрыва и доведи этот шаг до конца.');
+  return lines.join('\n');
+}
+
 /** Короткий ответ имитации на текст владельца. Без обзора диска и без выдачи за живого агента. */
 export function simulatedQuestionAnswer(task: string): string {
   const prompt = userPromptFromTask(task);

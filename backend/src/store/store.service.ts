@@ -130,10 +130,31 @@ export class StoreService {
       ) {
         continue;
       }
+      const stepTitle =
+        run.stepIndex !== null && run.stepIndex >= 0
+          ? (run.steps[run.stepIndex]?.title ?? null)
+          : null;
       run.status = 'failed';
-      run.error = 'Сервер перезапустился, пока запуск ещё шёл.';
+      run.error = stepTitle
+        ? `Сервер перезапустился, пока шаг «${stepTitle}» ещё шёл. Нажмите «Повторить», чтобы продолжить с этого места.`
+        : 'Сервер перезапустился, пока запуск ещё шёл. Нажмите «Повторить», чтобы продолжить.';
       run.updatedAt = new Date().toISOString();
       run.finishedAt = run.updatedAt;
+      if (run.stepIndex !== null && run.steps[run.stepIndex]) {
+        const step = run.steps[run.stepIndex];
+        const line = run.error.startsWith('Ошибка:')
+          ? run.error
+          : `Ошибка: ${run.error}`;
+        const last = step.messages[step.messages.length - 1];
+        if (last?.text !== line) {
+          step.messages.push({
+            id: randomUUID(),
+            at: run.updatedAt,
+            author: 'role',
+            text: line,
+          });
+        }
+      }
       run.events.push({
         id: randomUUID(),
         at: run.updatedAt,

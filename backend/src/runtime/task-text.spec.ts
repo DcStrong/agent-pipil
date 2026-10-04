@@ -1,5 +1,6 @@
 import { roleTurn } from './role-turn';
 import {
+  retryStepNote,
   simulatedQuestionAnswer,
   splitRunTask,
   userPromptFromTask,
@@ -12,6 +13,23 @@ describe('task-text', () => {
       title: 'Вопрос',
       body: 'привет',
     });
+  });
+
+  it('retryStepNote перечисляет готовые шаги и ошибку', () => {
+    const note = retryStepNote({
+      stepTitle: 'Бэкенд',
+      error: 'Cursor CLI завершился с ошибкой: trust',
+      priorWork: [
+        {
+          title: 'Анализ',
+          agentName: 'Аналитик',
+          summary: 'План готов',
+        },
+      ],
+    });
+    expect(note).toContain('Бэкенд');
+    expect(note).toContain('trust');
+    expect(note).toContain('Аналитик');
   });
 
   it('имитация отвечает на привет и не выдаёт обзор диска', () => {
